@@ -60,6 +60,9 @@ function applyStyle() {
 
 function showButtons() {
   const live = mode === 'live';
+  // The level meter is only meaningful while something is being listened to;
+  // left up it reads as a stray line under the brand pill.
+  $('vu-track').hidden = !(live || mode === 'recording');
   $('btn-live').classList.toggle('active', live);
   $('btn-stop').hidden = mode !== 'recording';
   $('btn-submit').hidden = mode !== 'recording';

@@ -7,30 +7,49 @@
 <div id="app">
   <div id="stage"></div>
 
-  <header id="bar">
+  <!-- Separate floating pills rather than one full-width bar, so the canvas
+       stays visible behind and drag works in the gaps between them. -->
+  <div id="top-bar">
     <span class="brand">LIQUID</span>
-    <div class="group">
-      <button id="btn-mic" class="icon" title="Record from microphone">●</button>
-      <label id="lbl-file" class="icon" title="Upload audio">▤
+
+    <div id="audio-controls">
+      <button id="btn-mic" class="btn-icon" title="Record from microphone" aria-label="Record from microphone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3z"/><path d="M6.5 11.5a5.5 5.5 0 0 0 11 0"/><path d="M12 17v3.5"/></svg>
+      </button>
+      <label id="lbl-file" class="btn-icon" title="Upload audio file" aria-label="Upload audio file">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.2l2 2h7.8a2 2 0 0 1 2 2v6.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></svg>
         <input type="file" id="file" accept="audio/*" hidden>
       </label>
-      <button id="btn-live" class="icon" title="Live mode">((•))</button>
-      <button id="btn-stop" class="icon" title="Stop capture" hidden>■</button>
-      <button id="btn-submit" class="icon go" title="Create design" hidden>✓</button>
-      <button id="btn-rec" class="icon" title="Record video" hidden>◉</button>
-      <button id="btn-rec-stop" class="icon" title="Stop video" hidden>◼</button>
-      <button id="btn-clear" class="icon" title="Clear">✕</button>
+      <button id="btn-live" class="btn-icon" title="Live mode" aria-label="Start live mode">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4"/><path d="M16.2 7.8a6 6 0 0 1 0 8.4"/><path d="M4.9 4.9a10 10 0 0 0 0 14.2"/><path d="M19.1 4.9a10 10 0 0 1 0 14.2"/></svg>
+      </button>
+      <button id="btn-stop" class="btn-icon" title="Stop capture" aria-label="Stop capture" hidden>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg>
+      </button>
+      <button id="btn-submit" class="btn-icon btn-submit" title="Create design" aria-label="Create design" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+      </button>
+      <button id="btn-rec" class="btn-icon" title="Record video" aria-label="Record video" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3.5" fill="currentColor" stroke="none"/></svg>
+      </button>
+      <button id="btn-rec-stop" class="btn-icon" title="Stop video" aria-label="Stop video" hidden>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="7" y="7" width="10" height="10" rx="2.5"/></svg>
+      </button>
+      <button id="btn-clear" class="btn-icon btn-clear" title="Clear" aria-label="Clear">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7h15"/><path d="M9.5 7V5.8A1.8 1.8 0 0 1 11.3 4h1.4a1.8 1.8 0 0 1 1.8 1.8V7"/><path d="M6.5 7l.7 10.7a2 2 0 0 0 2 1.8h5.6a2 2 0 0 0 2-1.8L17.5 7"/></svg>
+      </button>
     </div>
-    <div class="group exports">
+
+    <div id="export-btns">
       <button data-export="png">PNG</button>
       <button data-export="flat-svg">Flat SVG</button>
       <button data-export="flat-pdf">Flat PDF</button>
       <button data-export="outline-svg">Outline SVG</button>
       <button data-export="outline-pdf">Outline PDF</button>
     </div>
-  </header>
+  </div>
 
-  <div id="vu-track"><div id="vu"></div></div>
+  <div id="vu-track" hidden><div id="vu"></div></div>
   <div id="status">Ready</div>
 
   <div id="video-ready" hidden>

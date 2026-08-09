@@ -24,8 +24,87 @@ html, body {
 #app { position: relative; height: 100%; }
 #stage { position: absolute; inset: 0; }
 
-/* Floating chrome */
-#bar, #panel, #status, #video-ready, #vu-track {
+/* Floating chrome: separate pills, not one bar. Each carries the same glass
+   treatment, and the top bar itself is pointer-transparent so the canvas
+   stays draggable in the gaps between them. */
+.brand, #audio-controls, #export-btns, #panel, #status, #video-ready, #vu-track {
+  position: absolute;
+  background: var(--chrome);
+  border: 1px solid var(--edge);
+  -webkit-backdrop-filter: blur(40px) saturate(1.8);
+  backdrop-filter: blur(40px) saturate(1.8);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, .35);
+  border-radius: var(--r);
+  z-index: 10;
+}
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .brand, #audio-controls, #export-btns, #panel, #status, #video-ready, #vu-track {
+    background: rgba(24, 28, 32, .94);
+  }
+}
+
+#top-bar {
+  position: absolute;
+  top: 16px; left: 16px; right: 16px;
+  display: flex; align-items: center; gap: 12px;
+  pointer-events: none;          /* canvas drag works between the pills */
+  z-index: 10;
+}
+#top-bar > * { position: static; pointer-events: auto; }
+
+.brand {
+  height: 40px;
+  display: flex; align-items: center;
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: 12px; font-weight: 650; letter-spacing: .18em;
+  color: var(--t1);
+}
+
+#audio-controls {
+  display: flex; gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+}
+
+.btn-icon {
+  width: 32px; height: 32px;
+  border: none; border-radius: 50%;
+  background: transparent;
+  color: var(--t1);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease, transform .12s ease;
+}
+.btn-icon:hover { background: rgba(255, 255, 255, .09); }
+.btn-icon:active { transform: scale(.92); }
+.btn-icon svg { width: 17px; height: 17px; }
+.btn-icon.active { background: rgba(255, 255, 255, .16); }
+.btn-submit { color: #9ff0c4; }
+.btn-clear:hover { color: #f0a8b4; }
+
+#export-btns {
+  margin-left: auto;
+  display: flex;
+  height: 40px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+#export-btns button {
+  border: none;
+  border-left: 1px solid rgba(255, 255, 255, .07);
+  border-radius: 0;
+  background: transparent;
+  color: var(--t2);
+  font-size: 12px; font-weight: 500;
+  padding: 0 15px;
+  cursor: pointer;
+  transition: background .2s ease, color .2s ease;
+}
+#export-btns button:first-child { border-left: none; }
+#export-btns button:hover { background: rgba(255, 255, 255, .09); color: var(--t1); }
+
+#vu-track {
   position: absolute;
   background: var(--chrome);
   border: 1px solid var(--edge);
@@ -35,16 +114,7 @@ html, body {
   z-index: 5;
 }
 
-#bar {
-  top: 14px; left: 14px; right: 14px;
-  display: flex; align-items: center; gap: 14px;
-  padding: 8px 12px;
-}
-.brand { font-weight: 650; letter-spacing: .18em; font-size: 12px; }
-.group { display: flex; align-items: center; gap: 4px; }
-.exports { margin-left: auto; flex-wrap: wrap; }
-
-button, .icon, select {
+#video-ready button, select {
   font: inherit; color: var(--t1);
   background: transparent;
   border: 1px solid transparent;
@@ -53,16 +123,11 @@ button, .icon, select {
   cursor: pointer;
   transition: background .18s ease, color .18s ease;
 }
-button:hover, .icon:hover { background: rgba(255, 255, 255, .09); }
-.icon { min-width: 34px; text-align: center; line-height: 1; }
-.icon.go { color: #9ff0c4; }
-.icon.active { background: rgba(255, 255, 255, .16); }
-.exports button { font-size: 11.5px; color: var(--t2); }
-.exports button:hover { color: var(--t1); }
-button.ghost { color: var(--t3); }
+#video-ready button:hover { background: rgba(255, 255, 255, .09); }
+#video-ready button.ghost { color: var(--t3); }
 
 #vu-track {
-  top: 66px; left: 14px; width: 150px; height: 4px;
+  top: 68px; left: 14px; width: 150px; height: 4px;
   padding: 0; overflow: hidden; border-radius: 3px;
 }
 #vu { height: 100%; width: 0; background: #9ff0c4; transition: width .08s linear; }
@@ -81,7 +146,7 @@ button.ghost { color: var(--t3); }
 }
 
 #panel {
-  top: 66px; right: 14px; bottom: 14px;
+  top: 68px; right: 14px; bottom: 14px;
   width: 268px;
   padding: 4px 16px 14px;
   overflow-y: auto;
@@ -153,6 +218,14 @@ select option { background: #1b1f24; }
 }
 
 @media (max-width: 860px) {
+  /* Wrap the export pill onto its own row rather than hiding it — narrow
+     screens still need the exports. */
+  #top-bar { flex-wrap: wrap; }
+  #export-btns {
+    margin-left: 0; width: 100%; height: auto;
+    border-radius: var(--r); flex-wrap: wrap;
+  }
+  #export-btns button { flex: 1 1 auto; padding: 9px 10px; }
   #panel { top: auto; left: 14px; right: 14px; bottom: 60px; width: auto; max-height: 42vh; }
   #status { max-width: none; right: 14px; }
   #video-ready { right: 14px; bottom: 60px; }
