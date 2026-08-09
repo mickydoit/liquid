@@ -236,6 +236,19 @@ async function exportVideo() {
 window.addEventListener('DOMContentLoaded', () => {
   renderer = new LiquidRenderer($('stage'));
   applyStyle();
+
+  // Keep the design centred in the space the chrome leaves. Measured rather
+  // than hardcoded, so it follows the panel's real size and the mobile
+  // layout where the panel sits along the bottom instead of the right.
+  const applyInset = () => {
+    const panel = $('panel').getBoundingClientRect();
+    const stage = $('stage').getBoundingClientRect();
+    const overlapsRight = panel.left > stage.left + stage.width * 0.5;
+    if (overlapsRight) renderer.setViewInset(Math.max(0, stage.right - panel.left) + 16, 0);
+    else renderer.setViewInset(0, Math.max(0, stage.bottom - panel.top) + 12);
+  };
+  applyInset();
+  window.addEventListener('resize', applyInset);
   // Empty canvas until the first valid sound: idleState has grow 0.
   renderer.setField(idleState(), 'full');
 

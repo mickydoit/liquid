@@ -63,6 +63,11 @@ export class LiquidRenderer {
     this.anim = 'full';
     this.zoom = 1;
     this.pan = [0, 0];
+    // Chrome inset, kept SEPARATE from the user's pan: the design is nudged
+    // and shrunk to centre in the area the floating panel does not cover.
+    // Exports must not inherit it — see renderToCanvas.
+    this.inset = [0, 0];
+    this.insetZoom = 1;
     // Global scalar on material time: 1 while live, and the Motion control
     // while a design is held still. 0 freezes it completely.
     this.materialRate = 1;
@@ -103,7 +108,10 @@ export class LiquidRenderer {
   setStyle(patch) { Object.assign(this.style, patch); this._dirty = true; }
   setFrameSink(fn) { this._frameSink = fn; }
 
-  _uploadUniforms(gl, aspect) {
+  // `useInset` is false for exports: the chrome offset exists to dodge the
+  // on-screen panel, and baking it into an exported image would leave the
+  // design sitting off-centre with dead space on one side.
+  _uploadUniforms(gl, aspect, useInset = true) {
     const s = this.state, st = this.style, u = this.u;
     gl.uniform1f(u.uM, s.m); gl.uniform1f(u.uN, s.n);
     gl.uniform1f(u.uKr, s.kr); gl.uniform1f(u.uMa, s.ma);
@@ -115,8 +123,10 @@ export class LiquidRenderer {
     gl.uniform1f(u.uMatTime, this._matTime);
     gl.uniform1f(u.uGrow, s.grow ?? 1);
     gl.uniform1f(u.uAspect, aspect);
-    gl.uniform1f(u.uZoom, this.zoom);
-    gl.uniform2fv(u.uPan, this.pan);
+    gl.uniform1f(u.uZoom, this.zoom * (useInset ? this.insetZoom : 1));
+    gl.uniform2fv(u.uPan, useInset
+      ? [this.pan[0] + this.inset[0], this.pan[1] + this.inset[1]]
+      : this.pan);
     gl.uniform1f(u.uGloss, st.gloss);
     gl.uniform1f(u.uDispersion, st.dispersion);
     gl.uniform1f(u.uFlat, st.flat ? 1 : 0);
@@ -210,7 +220,7 @@ export class LiquidRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (this.state) {
-      this._uploadUniforms(gl, width / height);
+      this._uploadUniforms(gl, width / height, false);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     const px = new Uint8Array(width * height * 4);
@@ -237,6 +247,8 @@ export class LiquidRenderer {
   // zoomed/panned view would export a different framing from the one on
   // screen — the raster and vector outputs have to agree.
   viewBounds() {
+    // Deliberately excludes the chrome inset: the vector export is framed the
+    // way the exported raster is, not the way the panel-dodged screen is.
     const aspect = this.canvas.width / this.canvas.height;
     const k = 3.15 / this.zoom;
     return {
@@ -246,6 +258,17 @@ export class LiquidRenderer {
   }
 
   setZoom(z) { this.zoom = Math.min(6, Math.max(0.35, z)); this._dirty = true; }
+
+  // Centre the design in the region NOT covered by floating chrome. Offsets
+  // the framing and shrinks it just enough to fit, the way soundform's camera
+  // view-offset does — a design centred on the raw canvas reads as pushed up
+  // against whichever panel overlaps it.
+  setViewInset(rightPx = 0, bottomPx = 0) {
+    const w = this.container.clientWidth || 1, h = this.container.clientHeight || 1;
+    this.inset = [-rightPx / (2 * w), bottomPx / (2 * h)];
+    this.insetZoom = Math.min(1, (w - rightPx) / w, (h - bottomPx) / h);
+    this._dirty = true;
+  }
   resetView() { this.zoom = 1; this.pan = [0, 0]; this._dirty = true; }
 
   // Scroll / pinch to scale, drag to pan — the design is 2D, so there is no
