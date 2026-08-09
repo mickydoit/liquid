@@ -78,7 +78,12 @@ export class LiveConductor {
     this._loudFor = f.rms > ON_RMS ? this._loudFor + dt : 0;
     this._quietFor = f.rms < OFF_RMS ? this._quietFor + dt : 0;
 
-    if (this._loudFor >= STABLE_SEC) this.phase = 'active';
+    if (this._loudFor >= STABLE_SEC) {
+      // First valid sound: flood the figure in. Held across silence after
+      // that — the design never drains back to an empty canvas on its own.
+      this.field.growTarget = 1;
+      this.phase = 'active';
+    }
     else if (this.phase === 'active' && this._quietFor >= RELEASE_SEC) this.phase = 'hold';
 
     // Responsive only while the sound is actually present. Without this the
@@ -116,6 +121,8 @@ export class LiveConductor {
   }
 
   reset() {
+    // idleState has growTarget 0, so Clear drains the figure back out rather
+    // than cutting it.
     this.field = idleState();
     this.phase = 'idle';
     this._loudFor = 0;

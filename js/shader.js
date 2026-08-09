@@ -1,6 +1,6 @@
 // The cymatic water fragment shader.
 //
-// ⚠ psi(), nodalAt(), dropsAt() and waterAt() MIRROR js/cymafield.js exactly.
+// ⚠ psi(), nodalAt() and waterAt() MIRROR js/cymafield.js exactly.
 // The CPU copy drives the vector export; if the two drift, the exported
 // outline stops matching what is on screen. Change them together.
 //
@@ -18,7 +18,7 @@ export const FRAG = `
 precision highp float;
 varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
-uniform float uTimeC, uRipAmt, uRipT, uMatTime;
+uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
 uniform float uAspect, uZoom, uGloss, uDispersion, uFlat, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
@@ -59,38 +59,13 @@ float nodalAt(vec2 p) {
   return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
 
-float hash2(vec2 c) { return fract(sin(c.x * 127.1 + c.y * 311.7) * 43758.5453); }
-
-// Idle pools. Rounded, slightly elongated puddles via per-drop rotation and
-// aspect — a plain radial falloff draws circles, and angular harmonics make
-// every drop the same starfish. Both read as repeated identical shapes.
-float dropsAt(vec2 p) {
-  vec2 g = p * 2.6;
-  vec2 i0 = floor(g);
-  float best = 0.0;
-  for (int dj = -1; dj <= 1; dj++) {
-    for (int di = -1; di <= 1; di++) {
-      vec2 c = i0 + vec2(float(di), float(dj));
-      float h = hash2(c), h2 = hash2(c + vec2(37.1, -11.7));
-      if (h > 0.62) {
-        vec2 ctr = c + vec2(0.15 + 0.7 * h, 0.15 + 0.7 * h2);
-        float rad = 0.16 + 0.30 * h2;
-        float rot = h * 6.2831853;
-        vec2 dv = g - ctr;
-        vec2 q = vec2((dv.x * cos(rot) + dv.y * sin(rot)) / (0.66 + 0.7 * h2),
-                      -dv.x * sin(rot) + dv.y * cos(rot));
-        float a = atan(q.y, q.x);
-        float rr = rad * (1.0 + 0.10 * sin(a * 2.0 + h * 21.0) + 0.05 * sin(a * 3.0 - h2 * 17.0));
-        best = max(best, 1.0 - smoothstep(rr * 0.45, rr, length(q)));
-      }
-    }
-  }
-  return best * 0.7 * (1.0 - smoothstep(1.02, 1.30, length(p)));
-}
-
+// Emergence mask. The figure floods outward from the centre, so a design
+// arrives as liquid spreading into the pattern rather than being switched on.
+// At uGrow = 0 nothing is visible — that is the resting state now, instead of
+// a scatter of unrelated droplets sitting over the figure.
 float waterAt(vec2 p) {
-  float gth = smoothstep(0.04, 0.34, uAmp);
-  return clamp(nodalAt(p) * gth + dropsAt(p) * (1.0 - gth), 0.0, 1.0);
+  float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
+  return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }
 
 void main() {

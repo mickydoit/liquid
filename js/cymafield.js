@@ -35,6 +35,11 @@ export function idleState() {
     fine: 0,           // fine ripple detail (spectral centroid)
     chaos: 0,          // layering / instability (noisy input)
     phase: 0,
+    // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
+    // renderer eases `grow` toward `growTarget`, so a design animates INTO
+    // existence rather than appearing whole.
+    grow: 0,
+    growTarget: 0,
     t: 0,              // seconds
     ripAmt: 0,         // transient impulse strength
     ripT: 9,           // seconds since that impulse
@@ -110,60 +115,23 @@ export function nodalThickness(x, y, s) {
   return T;
 }
 
-// How strongly the pattern has taken hold. Below this, the liquid has not
-// been organised yet and sits as scattered droplets.
-export function gather(s) { return smoothstep(0.04, 0.34, s.amp); }
-
-// Full thickness including idle droplets. `withDrops` is false for the vector
-// export: the droplet term uses a sin-hash, which cannot be reproduced bit
-// for bit between float32 GLSL and float64 JS (WebGL1 has no integer ops), so
-// the export traces the cymatic structure only. Droplets are secondary detail
-// and dissolve as soon as there is sound.
-export function thickness(x, y, s, withDrops = true) {
-  const g = gather(s);
-  const nodal = nodalThickness(x, y, s);
-  if (!withDrops) return nodal;
-  return clamp01(nodal * g + droplets(x, y, s) * (1 - g));
-}
-
-function hash2(i, j) {
-  const v = Math.sin(i * 127.1 + j * 311.7) * 43758.5453;
-  return v - Math.floor(v);
-}
-
-// Scattered idle pools. Deliberately irregular — a grid of jittered centres
-// with per-cell radii, so they never read as repeated circles.
-export function droplets(x, y, s) {
-  const scale = 2.6;
-  const gx = x * scale, gy = y * scale;
-  const i0 = Math.floor(gx), j0 = Math.floor(gy);
-  let best = 0;
-  for (let dj = -1; dj <= 1; dj++) {
-    for (let di = -1; di <= 1; di++) {
-      const i = i0 + di, j = j0 + dj;
-      const h = hash2(i, j), h2 = hash2(i + 37.1, j - 11.7);
-      if (h > 0.62) {
-        const cx = i + 0.15 + 0.7 * h, cy = j + 0.15 + 0.7 * h2;
-        const rad = 0.16 + 0.30 * h2;
-        // Real droplets are rounded, slightly elongated puddles — not lobed
-        // stars. Per-drop rotation and aspect vary them far more naturally
-        // (and more water-like) than adding harmonics ever did; a strong
-        // angular wobble just made every one a starfish.
-        const rot = h * 6.2831853;
-        const dx = gx - cx, dy = gy - cy;
-        const qx = (dx * Math.cos(rot) + dy * Math.sin(rot)) / (0.66 + 0.7 * h2);
-        const qy = -dx * Math.sin(rot) + dy * Math.cos(rot);
-        const d = Math.sqrt(qx * qx + qy * qy);
-        const a = Math.atan2(qy, qx);
-        const rr = rad * (1 + 0.10 * Math.sin(a * 2 + h * 21) + 0.05 * Math.sin(a * 3 - h2 * 17));
-        best = Math.max(best, 1 - smoothstep(rr * 0.45, rr, d));
-      }
-    }
-  }
+// Emergence mask. The figure floods outward from the centre, so a design
+// arrives as liquid spreading into the pattern rather than being switched on.
+// At grow = 0 nothing is visible at all — that is the resting state now,
+// instead of a scatter of unrelated droplets sitting over the figure.
+export function reveal(x, y, s) {
+  const g = s.grow ?? 1;
   const r = Math.sqrt(x * x + y * y);
-  // Idle water is a secondary detail: thinner than gathered water, so the
-  // resting state reads as a damp surface rather than as the subject.
-  return best * 0.7 * (1 - smoothstep(1.02, 1.30, r));
+  return 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
+}
+
+// Water thickness. Nodal structure only — there is no separate droplet layer:
+// scattered drops read as an unrelated element sitting over the figure rather
+// than as part of it, and the emergence mask is a better resting state.
+// Because there is now only one term, the CPU field and the GLSL agree
+// exactly and the vector export needs no exceptions.
+export function thickness(x, y, s) {
+  return clamp01(nodalThickness(x, y, s) * reveal(x, y, s));
 }
 
 // ── audio → field ──────────────────────────────────────────────────────
@@ -202,6 +170,20 @@ export function glide(state, target, dt, tau = 0.5) {
   return state;
 }
 
+// Seconds for a design to flood in from nothing.
+export const GROW_SEC = 1.35;
+
+// Ease `grow` toward its target. Runs every frame regardless of whether the
+// geometry is otherwise frozen, so a held or submitted design still animates
+// in once — and then stops, because grow has arrived.
+export function stepGrow(state, dt) {
+  const target = state.growTarget ?? 1;
+  const step = dt / GROW_SEC;
+  if (state.grow < target) state.grow = Math.min(target, state.grow + step);
+  else if (state.grow > target) state.grow = Math.max(target, state.grow - step * 2);
+  return state.grow;
+}
+
 // Advance time and decay the transient impulse.
 export function advance(state, dt) {
   state.t += dt;
@@ -219,5 +201,5 @@ export function kick(state, strength = 1) {
 
 // Signed field for contouring: negative inside the water.
 export function makeWaterField(s, iso = 0.5) {
-  return (x, y) => iso - thickness(x, y, s, false);
+  return (x, y) => iso - thickness(x, y, s);
 }

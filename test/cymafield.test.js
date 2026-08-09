@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { idleState, psi, nodalThickness, thickness, droplets, gather,
+import { idleState, psi, nodalThickness, thickness, reveal, stepGrow, GROW_SEC,
          targetFromFeatures, glide, advance, kick, makeWaterField } from '../js/cymafield.js';
 import { marchingSquares, fieldOutline } from '../js/contour.js';
 
@@ -16,7 +16,7 @@ const grid = (fn, n = 90, span = 1.15) => {
   return out;
 };
 
-const loud = (o = {}) => Object.assign(idleState(), { amp: 0.8 }, o);
+const loud = (o = {}) => Object.assign(idleState(), { amp: 0.8, grow: 1 }, o);
 
 test('psi is finite everywhere, including the origin', () => {
   // atan2(0,0) and the 1/sqrt radial term both live at r = 0.
@@ -76,7 +76,7 @@ test('pitch changes the TOPOLOGY, not just a size or a colour', () => {
   const at = (pitchNorm) => {
     const s = Object.assign(idleState(),
       targetFromFeatures({ pitchNorm, rms: 0.3, centroid: 0.4, spread: 0.15, pitchConf: 0.9 }));
-    s.amp = 0.7;
+    s.amp = 0.7; s.grow = 1;
     return marchingSquares(makeWaterField(s), { x0: -1.2, y0: -1.2, x1: 1.2, y1: 1.2 }, 300).length;
   };
   const lowN = at(0.12), highN = at(0.85);
@@ -86,7 +86,7 @@ test('pitch changes the TOPOLOGY, not just a size or a colour', () => {
 
 test('amplitude controls how much water is gathered into the figure', () => {
   const area = (amp) => {
-    const s = Object.assign(idleState(), { m: 4, n: 3, amp });
+    const s = Object.assign(idleState(), { m: 4, n: 3, amp, grow: 1 });
     let a = 0;
     for (const { x, y } of grid(() => 0, 80)) {
       if (Math.hypot(x, y) < 0.95) a += nodalThickness(x, y, s);
@@ -98,38 +98,7 @@ test('amplitude controls how much water is gathered into the figure', () => {
   assert.ok(full > mid, `and keep widening (${mid} -> ${full})`);
 });
 
-test('silence shows scattered droplets; sound pulls them into the pattern', () => {
-  // The requested state machine: idle = droplets, sound = cymatic formation.
-  const quiet = idleState();
-  assert.equal(gather(quiet), 0, 'silence must not gather');
-  let dropArea = 0;
-  for (const { x, y } of grid(() => 0, 80)) dropArea += droplets(x, y, quiet);
-  assert.ok(dropArea > 50, `idle should still show some water (${dropArea})`);
 
-  const s = loud();
-  assert.ok(gather(s) > 0.95, 'loud input must fully gather');
-  // With sound, the droplet term is switched out entirely.
-  const withDrops = thickness(0.9, 0.9, s, true);
-  assert.ok(Math.abs(withDrops - nodalThickness(0.9, 0.9, s)) < 1e-6);
-});
-
-test('droplets are irregular, not a repeating grid of identical circles', () => {
-  const s = idleState();
-  const sizes = [];
-  for (let j = -2; j <= 2; j++) {
-    for (let i = -2; i <= 2; i++) {
-      let a = 0;
-      for (let k = 0; k < 400; k++) {
-        const x = i * 0.38 + (k % 20) * 0.019, y = j * 0.38 + Math.floor(k / 20) * 0.019;
-        a += droplets(x, y, s);
-      }
-      sizes.push(a);
-    }
-  }
-  const mean = sizes.reduce((p, c) => p + c, 0) / sizes.length;
-  const sd = Math.sqrt(sizes.reduce((p, c) => p + (c - mean) ** 2, 0) / sizes.length);
-  assert.ok(sd > mean * 0.25, `droplet field is too uniform (sd ${sd.toFixed(1)} vs mean ${mean.toFixed(1)})`);
-});
 
 test('a transient adds an outward ripple that decays', () => {
   const s = loud();
@@ -171,4 +140,49 @@ test('field parameters stay finite under sustained glide from any features', () 
       }
     }
   }
+});
+
+// ── emergence ──────────────────────────────────────────────────────────
+test('at rest the canvas is EMPTY — no droplets, no partial figure', () => {
+  // The resting state used to be a scatter of droplets, which read as an
+  // unrelated layer sitting over the figure rather than as part of it.
+  const s = idleState();
+  assert.equal(s.grow, 0);
+  let total = 0;
+  for (let y = -1.2; y <= 1.2; y += 0.05) {
+    for (let x = -1.2; x <= 1.2; x += 0.05) total += thickness(x, y, s);
+  }
+  assert.ok(total < 0.5, `resting canvas should be empty, got ${total.toFixed(2)}`);
+});
+
+test('a design floods outward from the centre rather than appearing whole', () => {
+  const s = Object.assign(idleState(), { amp: 0.8, growTarget: 1 });
+  const covered = () => {
+    let n = 0;
+    for (let y = -1.2; y <= 1.2; y += 0.05) {
+      for (let x = -1.2; x <= 1.2; x += 0.05) if (thickness(x, y, s) > 0.5) n++;
+    }
+    return n;
+  };
+  const start = covered();
+  assert.equal(start, 0, 'nothing should be visible before it grows');
+
+  for (let i = 0; i < 30; i++) stepGrow(s, GROW_SEC / 60);
+  assert.ok(s.grow > 0.4 && s.grow < 0.6, `half-way grow was ${s.grow}`);
+  assert.ok(reveal(0, 0, s) > 0.9, 'centre should be flooded by half-way');
+  assert.ok(reveal(1.15, 0, s) < 0.1, 'the rim should not be flooded yet');
+  const mid = covered();
+
+  for (let i = 0; i < 60; i++) stepGrow(s, GROW_SEC / 60);
+  assert.equal(s.grow, 1);
+  assert.ok(covered() > mid, `coverage must keep increasing (${mid} -> ${covered()})`);
+});
+
+test('grow settles exactly at its target, and drains back when it returns to 0', () => {
+  const s = Object.assign(idleState(), { amp: 0.8, growTarget: 1 });
+  for (let i = 0; i < 200; i++) stepGrow(s, 0.05);
+  assert.equal(s.grow, 1, 'grow must settle exactly, not overshoot');
+  s.growTarget = 0;
+  for (let i = 0; i < 200; i++) stepGrow(s, 0.05);
+  assert.equal(s.grow, 0, 'Clear must drain the figure back out');
 });

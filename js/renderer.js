@@ -1,4 +1,5 @@
 import { VERT, FRAG } from './shader.js';
+import { stepGrow } from './cymafield.js';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -8,7 +9,7 @@ import { VERT, FRAG } from './shader.js';
 
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
-  'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime',
+  'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
@@ -112,6 +113,7 @@ export class LiquidRenderer {
     gl.uniform1f(u.uTimeC, s.t);
     gl.uniform1f(u.uRipAmt, s.ripAmt); gl.uniform1f(u.uRipT, s.ripT);
     gl.uniform1f(u.uMatTime, this._matTime);
+    gl.uniform1f(u.uGrow, s.grow ?? 1);
     gl.uniform1f(u.uAspect, aspect);
     gl.uniform1f(u.uZoom, this.zoom);
     gl.uniform2fv(u.uPan, this.pan);
@@ -136,7 +138,28 @@ export class LiquidRenderer {
 
   _loop() {
     requestAnimationFrame(() => this._loop());
-    const frozen = this.anim === 'none' || (this.anim === 'material' && this.materialRate === 0);
+    // Emergence runs even when everything else is frozen: a design must still
+    // flood in once, and then it stops of its own accord because grow has
+    // arrived at its target. Without this, a submitted design at Motion 0
+    // would pop into existence fully formed.
+    let growing = false;
+    if (this.state) {
+      const now = performance.now() / 1000;
+      const dtG = Math.min(0.1, this._growTick ? now - this._growTick : 0.016);
+      this._growTick = now;
+      const before = this.state.grow ?? 1;
+      stepGrow(this.state, dtG);
+      growing = Math.abs((this.state.grow ?? 1) - before) > 1e-6;
+      if (growing) this._dirty = true;
+    } else {
+      this._growTick = 0;
+    }
+
+    // An empty, ungrown canvas has nothing to animate — without this the app
+    // redraws blank frames at 60fps while simply sitting there waiting.
+    const empty = this.state && (this.state.grow ?? 1) === 0 && (this.state.growTarget ?? 1) === 0;
+    const frozen = empty || this.anim === 'none'
+                || (this.anim === 'material' && this.materialRate === 0);
     if (this.state && !frozen) {
       const now = performance.now() / 1000;
       const dt = Math.min(0.1, this._tick ? now - this._tick : 0.016);

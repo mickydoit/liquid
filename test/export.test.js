@@ -8,6 +8,7 @@ const formed = (o = {}) => {
   const s = Object.assign(idleState(),
     targetFromFeatures({ pitchNorm: 0.3, rms: 0.35, centroid: 0.35, spread: 0.12, pitchConf: 0.95 }));
   s.amp = 0.75;
+  s.grow = 1;            // a fully emerged design
   return Object.assign(s, o);
 };
 
@@ -82,11 +83,11 @@ test('closedCatmullRom is periodic — a segment closes the ring', () => {
   assert.deepEqual(segs[segs.length - 1].end, pts[0]);
 });
 
-test('an idle field still contours (droplets are exportable too)', () => {
-  // withDrops is false for export — the droplet term uses a sin-hash that
-  // cannot be reproduced bit-for-bit between float32 GLSL and float64 JS — so
-  // an idle state legitimately traces nothing. It must not throw.
+test('an idle (ungrown) field contours to nothing without throwing', () => {
+  // At rest the canvas is empty, so there is genuinely no outline to trace.
+  // Exporting in that state must be a no-op, not a crash.
   const rings = marchingSquares(makeWaterField(idleState()),
     { x0: -1.35, y0: -1.35, x1: 1.35, y1: 1.35 }, 200);
   assert.ok(Array.isArray(rings));
+  assert.equal(rings.length, 0, 'an empty canvas should trace no rings');
 });

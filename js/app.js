@@ -46,6 +46,10 @@ function stateFromFingerprint(fp) {
     pitchConf: fp.pitchConfidence,
   }));
   s.amp = Math.min(1, Math.max(s.amp, params.flow * 1.6));
+  // Start empty and flood in, so a submitted design arrives rather than
+  // appearing whole.
+  s.grow = 0;
+  s.growTarget = 1;
   return s;
 }
 
@@ -232,7 +236,7 @@ async function exportVideo() {
 window.addEventListener('DOMContentLoaded', () => {
   renderer = new LiquidRenderer($('stage'));
   applyStyle();
-  // Idle droplets until the first valid sound.
+  // Empty canvas until the first valid sound: idleState has grow 0.
   renderer.setField(idleState(), 'full');
 
   $('btn-mic').addEventListener('click', startMic);

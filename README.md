@@ -46,14 +46,15 @@ rather than as a screenshot. Motion 0 freezes it completely.
 
 ## Behaviour
 
-**Live** — idle droplets until the first valid sound; the figure forms; when
+**Live** — an empty canvas until the first valid sound; the figure then floods
+in from the centre over ~1.35s; when
 the sound stops the design is **held** and keeps shimmering; a new stable
 sound flows into a new figure. Hysteresis (ON 0.020 / OFF 0.009 rms), a 0.22 s
 stability window and a 0.6 s release keep room tone and pitch-detector glitches
 from re-forming it.
 
 **Submitted recording** — the captured frames build one aggregate fingerprint
-and one design is generated. Its geometry is fixed; only the light on the
+and one design is generated, which floods in the same way. Its geometry is fixed; only the light on the
 water moves, at the Motion rate.
 
 **View** — scroll or pinch to scale, drag to move, double-click to reset;
@@ -99,9 +100,5 @@ screen. Change them together.
 
 ## Known limits
 
-- Idle droplets are excluded from the vector export. They use a sin-hash that
-  cannot be reproduced bit-for-bit between float32 GLSL and float64 JS
-  (WebGL1 has no integer ops), so the export traces the cymatic structure
-  only. They dissolve as soon as there is sound.
 - Live behaviour is covered by conductor tests rather than browser tests; a
   headless browser has no usable microphone.
