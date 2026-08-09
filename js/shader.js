@@ -20,6 +20,7 @@ varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime;
 uniform float uAspect, uZoom, uGloss, uDispersion, uFlat, uTransparent;
+uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
 
 const float PI = 3.14159265359;
@@ -93,7 +94,7 @@ float waterAt(vec2 p) {
 }
 
 void main() {
-  vec2 p = (vUv - 0.5) * vec2(uAspect, 1.0) * 3.15 / uZoom;
+  vec2 p = (vUv - 0.5 - uPan) * vec2(uAspect, 1.0) * 3.15 / uZoom;
   float T = waterAt(p);
   float px = 1.6 / (uZoom * 420.0);
 

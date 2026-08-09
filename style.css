@@ -231,3 +231,17 @@ select option { background: #1b1f24; }
   #video-ready { right: 14px; bottom: 60px; }
   .exports { width: 100%; }
 }
+
+#panel button.wide {
+  width: 100%;
+  margin-top: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--edge);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, .05);
+  color: var(--t2);
+  font: inherit; font-size: 12px;
+  cursor: pointer;
+}
+#panel button.wide:hover { background: rgba(255, 255, 255, .10); color: var(--t1); }
+.hint.tight { margin: 10px 0 0; }

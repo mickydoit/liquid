@@ -9,7 +9,7 @@ import { VERT, FRAG } from './shader.js';
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime',
-  'uAspect', 'uZoom', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
+  'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
 
@@ -61,6 +61,10 @@ export class LiquidRenderer {
     this.state = null;
     this.anim = 'full';
     this.zoom = 1;
+    this.pan = [0, 0];
+    // Global scalar on material time: 1 while live, and the Motion control
+    // while a design is held still. 0 freezes it completely.
+    this.materialRate = 1;
     this._matTime = 0;
     this._tick = 0;
     this._frameSink = null;
@@ -72,6 +76,7 @@ export class LiquidRenderer {
     };
 
     this._resize();
+    this._initInput();
     window.addEventListener('resize', () => this._resize());
     this._loop();
   }
@@ -109,6 +114,7 @@ export class LiquidRenderer {
     gl.uniform1f(u.uMatTime, this._matTime);
     gl.uniform1f(u.uAspect, aspect);
     gl.uniform1f(u.uZoom, this.zoom);
+    gl.uniform2fv(u.uPan, this.pan);
     gl.uniform1f(u.uGloss, st.gloss);
     gl.uniform1f(u.uDispersion, st.dispersion);
     gl.uniform1f(u.uFlat, st.flat ? 1 : 0);
@@ -130,14 +136,15 @@ export class LiquidRenderer {
 
   _loop() {
     requestAnimationFrame(() => this._loop());
-    if (this.state && this.anim !== 'none') {
+    const frozen = this.anim === 'none' || (this.anim === 'material' && this.materialRate === 0);
+    if (this.state && !frozen) {
       const now = performance.now() / 1000;
       const dt = Math.min(0.1, this._tick ? now - this._tick : 0.016);
       this._tick = now;
 
       // Material time always runs while animating — this is the shimmer, and
       // it is the only thing that moves during Hold.
-      this._matTime += dt;
+      this._matTime += dt * (this.anim === 'material' ? this.materialRate : 1);
 
       if (this.anim === 'full') {
         // Geometry time: breathing and fine-detail drift. Frozen in Hold so a
@@ -201,6 +208,71 @@ export class LiquidRenderer {
     ctx.putImageData(img, 0, 0);
     this._dirty = true;
     return out;
+  }
+
+  // The world rectangle currently visible. The vector export needs this or a
+  // zoomed/panned view would export a different framing from the one on
+  // screen — the raster and vector outputs have to agree.
+  viewBounds() {
+    const aspect = this.canvas.width / this.canvas.height;
+    const k = 3.15 / this.zoom;
+    return {
+      x0: (-0.5 - this.pan[0]) * aspect * k, x1: (0.5 - this.pan[0]) * aspect * k,
+      y0: (-0.5 - this.pan[1]) * k,          y1: (0.5 - this.pan[1]) * k,
+    };
+  }
+
+  setZoom(z) { this.zoom = Math.min(6, Math.max(0.35, z)); this._dirty = true; }
+  resetView() { this.zoom = 1; this.pan = [0, 0]; this._dirty = true; }
+
+  // Scroll / pinch to scale, drag to pan — the design is 2D, so there is no
+  // rotation to offer, but framing works the way it does elsewhere.
+  _initInput() {
+    const el = this.canvas;
+    let down = false, lx = 0, ly = 0, pinch0 = 0, zoom0 = 1;
+
+    el.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      this.setZoom(this.zoom * Math.exp(-e.deltaY * 0.0016));
+    }, { passive: false });
+
+    el.addEventListener('pointerdown', (e) => {
+      down = true; lx = e.clientX; ly = e.clientY;
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener('pointermove', (e) => {
+      if (!down) return;
+      // Pan in UV, so a drag tracks the cursor at any zoom level.
+      this.pan[0] += (e.clientX - lx) / el.clientWidth;
+      this.pan[1] -= (e.clientY - ly) / el.clientHeight;
+      lx = e.clientX; ly = e.clientY;
+      this._dirty = true;
+    });
+    const up = (e) => {
+      down = false;
+      if (el.hasPointerCapture?.(e.pointerId)) el.releasePointerCapture(e.pointerId);
+    };
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+
+    el.addEventListener('touchstart', (e) => {
+      if (e.touches.length === 2) {
+        pinch0 = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                            e.touches[0].clientY - e.touches[1].clientY);
+        zoom0 = this.zoom;
+      }
+    }, { passive: true });
+    el.addEventListener('touchmove', (e) => {
+      if (e.touches.length === 2 && pinch0 > 0) {
+        e.preventDefault();
+        const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX,
+                             e.touches[0].clientY - e.touches[1].clientY);
+        this.setZoom(zoom0 * (d / pinch0));
+      }
+    }, { passive: false });
+    el.addEventListener('touchend', () => { pinch0 = 0; }, { passive: true });
+
+    el.addEventListener('dblclick', () => this.resetView());
   }
 
   clear() { this.state = null; this._dirty = true; }

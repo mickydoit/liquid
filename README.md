@@ -37,8 +37,12 @@ topology drifting.
 | render state | geometry | material | used for |
 |---|---|---|---|
 | `full` | moves | moves | live, responding to sound |
-| `material` | frozen | moves | live Hold — the sound stopped |
-| `none` | frozen | frozen | a submitted recording (zero draw calls) |
+| `material` | frozen | moves | live Hold, and a submitted design |
+| `none` | frozen | frozen | Motion at 0 (zero draw calls) |
+
+A submitted design keeps its geometry frozen — the figure never changes on
+its own — while the water drifts at the **Motion** rate, so it reads as liquid
+rather than as a screenshot. Motion 0 freezes it completely.
 
 ## Behaviour
 
@@ -48,8 +52,13 @@ sound flows into a new figure. Hysteresis (ON 0.020 / OFF 0.009 rms), a 0.22 s
 stability window and a 0.6 s release keep room tone and pitch-detector glitches
 from re-forming it.
 
-**Submitted recording** — the captured frames build one aggregate fingerprint,
-one design is generated, and it is completely static.
+**Submitted recording** — the captured frames build one aggregate fingerprint
+and one design is generated. Its geometry is fixed; only the light on the
+water moves, at the Motion rate.
+
+**View** — scroll or pinch to scale, drag to move, double-click to reset;
+there is also a Scale slider. The vector export follows the on-screen framing,
+so a zoomed SVG matches what you see.
 
 ## Audio mapping
 

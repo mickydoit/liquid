@@ -19,6 +19,9 @@ let design = null;          // the submitted, static field state
 
 const params = {
   gloss: 1, dispersion: 1, flow: 0.35, flat: false,
+  // How much a design that is NOT responding to sound still moves. 0 freezes
+  // it completely (zero draw calls); the default is a slow drift.
+  motion: 0.35,
   ground: '#aeb8bf', ink: '#12181d', deep: '#7d94a6',
   transparent: false, exportRes: 1600,
 };
@@ -109,9 +112,11 @@ function submit() {
   const fp = buildFingerprint(frames, (performance.now() - recordStart) / 1000);
   design = stateFromFingerprint(fp);
   applyStyle();
-  // 'none': geometry AND material frozen, zero draw calls. Stays identical
-  // until a control changes or a new sound is submitted.
-  renderer.setField(design, 'none');
+  // 'material': the GEOMETRY is frozen — the figure never changes on its own —
+  // but the water keeps drifting at the Motion rate so a submitted design
+  // reads as liquid rather than as a screenshot. Motion 0 freezes it entirely.
+  renderer.materialRate = params.motion;
+  renderer.setField(design, 'material');
   mode = 'captured';
   showButtons();
   setStatus('Design created — static. Export PNG or vectors.');
@@ -132,6 +137,7 @@ async function toggleLive() {
               : 'Live — holding · shimmering');
     },
   });
+  renderer.materialRate = 1;
   conductor.start();
   mode = 'live';
   showButtons();
@@ -142,7 +148,11 @@ function endLive() {
   audio.stop();
   mode = renderer.state ? 'captured' : 'blank';
   // Freeze whatever was on screen when live ended.
-  if (renderer.state) { design = renderer.state; renderer.setField(design, 'none'); }
+  if (renderer.state) {
+    design = renderer.state;
+    renderer.materialRate = params.motion;
+    renderer.setField(design, 'material');
+  }
   showButtons();
   setStatus(design ? 'Live ended — design frozen' : 'Ready');
 }
@@ -180,6 +190,7 @@ function doExport(fmt) {
   const opts = {
     state, width: W, height: H, ink: params.ink,
     background: params.transparent ? null : params.ground, variant,
+    bounds: renderer.viewBounds(),   // keep the vector framing == the screen
   };
   if (fmt.endsWith('svg')) downloadText(buildSVG(opts), `liquid-${variant}.svg`);
   else exportPDF(opts);
@@ -250,8 +261,18 @@ window.addEventListener('DOMContentLoaded', () => {
     const s = currentState();
     if (s && mode === 'captured') {
       s.amp = clamp01(params.flow * 1.6);
-      renderer.setField(s, 'none');
+      renderer.setField(s, 'material');
     }
+  });
+  $('sl-motion').addEventListener('input', (e) => {
+    params.motion = parseFloat(e.target.value);
+    if (mode !== 'live') renderer.materialRate = params.motion;
+    renderer._dirty = true;
+  });
+  $('sl-scale').addEventListener('input', (e) => renderer.setZoom(parseFloat(e.target.value)));
+  $('btn-reset-view').addEventListener('click', () => {
+    renderer.resetView();
+    $('sl-scale').value = 1;
   });
   $('chk-flat').addEventListener('change', (e) => { params.flat = e.target.checked; applyStyle(); });
   $('chk-transparent').addEventListener('change', (e) => { params.transparent = e.target.checked; });

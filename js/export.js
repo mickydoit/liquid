@@ -13,8 +13,13 @@ function hexToRgb(hex) {
   return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
 }
 
-export function buildSVG({ state, width, height, ink, background, variant = 'flat' }) {
-  const { rings } = fieldOutline(makeWaterField(state), { width, height });
+export function buildSVG({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
+  // `bounds` is the on-screen view rectangle. Passing it is what keeps a
+  // zoomed or panned SVG framed the same as the canvas; without it the vector
+  // output would silently ignore the user's framing. margin 0 because the
+  // view is already the exact frame.
+  const opts = bounds ? { width, height, bounds, margin: 0 } : { width, height };
+  const { rings } = fieldOutline(makeWaterField(state), opts);
   const paths = rings.map((r, i) =>
     `    <path id="pool-${String(i + 1).padStart(3, '0')}" d="${ringToPath(r)}"/>`);
 
@@ -34,9 +39,10 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
   ].join('\n');
 }
 
-export function exportPDF({ state, width, height, ink, background, variant = 'flat' }) {
+export function exportPDF({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
   const { jsPDF } = window.jspdf;
-  const { rings } = fieldOutline(makeWaterField(state), { width, height });
+  const opts = bounds ? { width, height, bounds, margin: 0 } : { width, height };
+  const { rings } = fieldOutline(makeWaterField(state), opts);
   const mmW = width > height ? 297 : 210;
   const mmH = mmW * (height / width);
   const doc = new jsPDF({
