@@ -1,0 +1,83 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Liquid — cymatic water from sound</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%23aeb8bf'/%3E%3Cpath d='M16 6c5 4 8 7 8 11a8 8 0 0 1-16 0c0-4 3-7 8-11z' fill='%2312181d'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="style.css">
+
+<div id="app">
+  <div id="stage"></div>
+
+  <header id="bar">
+    <span class="brand">LIQUID</span>
+    <div class="group">
+      <button id="btn-mic" class="icon" title="Record from microphone">●</button>
+      <label id="lbl-file" class="icon" title="Upload audio">▤
+        <input type="file" id="file" accept="audio/*" hidden>
+      </label>
+      <button id="btn-live" class="icon" title="Live mode">((•))</button>
+      <button id="btn-stop" class="icon" title="Stop capture" hidden>■</button>
+      <button id="btn-submit" class="icon go" title="Create design" hidden>✓</button>
+      <button id="btn-rec" class="icon" title="Record video" hidden>◉</button>
+      <button id="btn-rec-stop" class="icon" title="Stop video" hidden>◼</button>
+      <button id="btn-clear" class="icon" title="Clear">✕</button>
+    </div>
+    <div class="group exports">
+      <button data-export="png">PNG</button>
+      <button data-export="flat-svg">Flat SVG</button>
+      <button data-export="flat-pdf">Flat PDF</button>
+      <button data-export="outline-svg">Outline SVG</button>
+      <button data-export="outline-pdf">Outline PDF</button>
+    </div>
+  </header>
+
+  <div id="vu-track"><div id="vu"></div></div>
+  <div id="status">Ready</div>
+
+  <div id="video-ready" hidden>
+    <span>Video ready</span>
+    <select id="sel-video-q">
+      <option value="original" selected>Original</option>
+      <option value="1080high">1080p high</option>
+      <option value="1080med">1080p medium</option>
+      <option value="720">720p</option>
+    </select>
+    <button id="btn-video-export">Export</button>
+    <button id="btn-video-discard" class="ghost">Discard</button>
+  </div>
+
+  <aside id="panel">
+    <details open>
+      <summary>Water</summary>
+      <label>Gloss<input type="range" id="sl-gloss" min="0" max="2" step="0.05" value="1"></label>
+      <label>Dispersion<input type="range" id="sl-dispersion" min="0" max="2.5" step="0.05" value="1"></label>
+      <label>Flow<input type="range" id="sl-flow" min="0" max="1" step="0.02" value="0.35"></label>
+      <label class="check"><input type="checkbox" id="chk-flat"> Flat view (what the vector export emits)</label>
+    </details>
+
+    <details open>
+      <summary>Colour</summary>
+      <label class="swatch">Ground<input type="color" id="col-ground" value="#aeb8bf"></label>
+      <label class="swatch">Ink<input type="color" id="col-ink" value="#12181d"></label>
+      <label class="swatch">Depth<input type="color" id="col-deep" value="#7d94a6"></label>
+    </details>
+
+    <details>
+      <summary>Export</summary>
+      <label>Resolution
+        <select id="sel-res">
+          <option value="1600" selected>1600 px</option>
+          <option value="2400">2400 px</option>
+          <option value="3840">3840 px</option>
+          <option value="7680">7680 px</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="chk-transparent"> Transparent background</label>
+    </details>
+
+    <p class="hint">Live holds the last design and shimmers.<br>A submitted recording is one static image.</p>
+  </aside>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="js/vendor/mp4-muxer.min.js"></script>
+<script type="module" src="js/app.js"></script>

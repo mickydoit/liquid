@@ -1,0 +1,11 @@
+{
+  "name": "liquid",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cymatic water from sound — standing-wave fields rendered as transparent liquid, exported as editable vectors.",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "start": "python3 -m http.server 8788"
+  }
+}

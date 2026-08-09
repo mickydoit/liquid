@@ -1,0 +1,207 @@
+import { VERT, FRAG } from './shader.js';
+
+// Minimal WebGL renderer: one fullscreen quad, one shader.
+//
+// Deliberately no three.js. The whole design is a single analytic fragment
+// program — there is no scene, no camera, no geometry to manage — so a scene
+// graph would be several hundred KB of dependency doing nothing.
+
+const UNIFORMS = [
+  'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
+  'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime',
+  'uAspect', 'uZoom', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
+  'uGround', 'uInk', 'uDeep',
+];
+
+function compile(gl, type, src) {
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src);
+  gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
+    throw new Error('shader compile failed: ' + gl.getShaderInfoLog(sh));
+  }
+  return sh;
+}
+
+export class LiquidRenderer {
+  constructor(container) {
+    this.container = container;
+    this.canvas = document.createElement('canvas');
+    this.canvas.style.cssText = 'display:block;width:100%;height:100%';
+    container.appendChild(this.canvas);
+
+    // preserveDrawingBuffer so a canvas read after the draw task still has
+    // pixels — video capture and PNG export both depend on it, and without it
+    // any later read silently returns an empty buffer.
+    const opts = { alpha: true, antialias: false, preserveDrawingBuffer: true };
+    this.gl = this.canvas.getContext('webgl', opts) || this.canvas.getContext('experimental-webgl', opts);
+    if (!this.gl) throw new Error('WebGL unavailable');
+    const gl = this.gl;
+
+    const prog = gl.createProgram();
+    gl.attachShader(prog, compile(gl, gl.VERTEX_SHADER, VERT));
+    gl.attachShader(prog, compile(gl, gl.FRAGMENT_SHADER, FRAG));
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      throw new Error('link failed: ' + gl.getProgramInfoLog(prog));
+    }
+    gl.useProgram(prog);
+    this.prog = prog;
+
+    const buf = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+    const loc = gl.getAttribLocation(prog, 'aPos');
+    gl.enableVertexAttribArray(loc);
+    gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+    this.u = {};
+    for (const n of UNIFORMS) this.u[n] = gl.getUniformLocation(prog, n);
+
+    this.state = null;
+    this.anim = 'full';
+    this.zoom = 1;
+    this._matTime = 0;
+    this._tick = 0;
+    this._frameSink = null;
+    this._dirty = true;
+
+    this.style = {
+      gloss: 1, dispersion: 1, flat: false, transparent: false,
+      ground: [0.68, 0.73, 0.78], ink: [0.07, 0.09, 0.11], deep: [0.49, 0.59, 0.69],
+    };
+
+    this._resize();
+    window.addEventListener('resize', () => this._resize());
+    this._loop();
+  }
+
+  _resize() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const w = this.container.clientWidth || 800, h = this.container.clientHeight || 600;
+    this.canvas.width = Math.floor(w * dpr);
+    this.canvas.height = Math.floor(h * dpr);
+    this._dirty = true;
+  }
+
+  // `anim` is the render state, not a style:
+  //   'full'     — live and responding: geometry and material both advance
+  //   'material' — live HOLD: geometry frozen, only light on the water moves
+  //   'none'     — submitted recording: nothing advances, zero draw calls
+  setField(state, anim = 'full') {
+    this.state = state;
+    this.anim = anim;
+    this._dirty = true;
+  }
+
+  setStyle(patch) { Object.assign(this.style, patch); this._dirty = true; }
+  setFrameSink(fn) { this._frameSink = fn; }
+
+  _uploadUniforms(gl, aspect) {
+    const s = this.state, st = this.style, u = this.u;
+    gl.uniform1f(u.uM, s.m); gl.uniform1f(u.uN, s.n);
+    gl.uniform1f(u.uKr, s.kr); gl.uniform1f(u.uMa, s.ma);
+    gl.uniform1f(u.uMix, s.mix); gl.uniform1f(u.uAmp, s.amp);
+    gl.uniform1f(u.uFine, s.fine); gl.uniform1f(u.uChaos, s.chaos);
+    gl.uniform1f(u.uPhase, s.phase);
+    gl.uniform1f(u.uTimeC, s.t);
+    gl.uniform1f(u.uRipAmt, s.ripAmt); gl.uniform1f(u.uRipT, s.ripT);
+    gl.uniform1f(u.uMatTime, this._matTime);
+    gl.uniform1f(u.uAspect, aspect);
+    gl.uniform1f(u.uZoom, this.zoom);
+    gl.uniform1f(u.uGloss, st.gloss);
+    gl.uniform1f(u.uDispersion, st.dispersion);
+    gl.uniform1f(u.uFlat, st.flat ? 1 : 0);
+    gl.uniform1f(u.uTransparent, st.transparent ? 1 : 0);
+    gl.uniform3fv(u.uGround, st.ground);
+    gl.uniform3fv(u.uInk, st.ink);
+    gl.uniform3fv(u.uDeep, st.deep);
+  }
+
+  _draw() {
+    const gl = this.gl;
+    gl.viewport(0, 0, this.canvas.width, this.canvas.height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (!this.state) return;
+    this._uploadUniforms(gl, this.canvas.width / this.canvas.height);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+
+  _loop() {
+    requestAnimationFrame(() => this._loop());
+    if (this.state && this.anim !== 'none') {
+      const now = performance.now() / 1000;
+      const dt = Math.min(0.1, this._tick ? now - this._tick : 0.016);
+      this._tick = now;
+
+      // Material time always runs while animating — this is the shimmer, and
+      // it is the only thing that moves during Hold.
+      this._matTime += dt;
+
+      if (this.anim === 'full') {
+        // Geometry time: breathing and fine-detail drift. Frozen in Hold so a
+        // held figure cannot change shape on its own.
+        this.state.t += dt;
+        this.state.phase += dt * 0.15;
+      }
+      // A transient keeps settling even in Hold — the pattern relaxes rather
+      // than snapping — but it only ever decays.
+      this.state.ripT += dt;
+      this.state.ripAmt *= Math.exp(-dt * 1.2);
+      this._dirty = true;
+    } else {
+      // 'none' falls through deliberately: no advance, no dirty flag, so a
+      // submitted design costs zero draw calls and is genuinely static.
+      this._tick = 0;
+    }
+    if (!this._dirty) return;
+    this._dirty = false;
+    this._draw();
+    // The drawing buffer is only guaranteed valid in the same task as the
+    // draw, so video capture must happen here.
+    if (this._frameSink) this._frameSink(performance.now());
+  }
+
+  // Offscreen render at an arbitrary size, returned as a 2D canvas.
+  renderToCanvas(width, height) {
+    const gl = this.gl;
+    const tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, width, height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    const fbo = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+
+    gl.viewport(0, 0, width, height);
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    if (this.state) {
+      this._uploadUniforms(gl, width / height);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+    const px = new Uint8Array(width * height * 4);
+    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, px);
+
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.deleteFramebuffer(fbo);
+    gl.deleteTexture(tex);
+
+    const out = document.createElement('canvas');
+    out.width = width; out.height = height;
+    const ctx = out.getContext('2d');
+    const img = ctx.createImageData(width, height);
+    // GL origin is bottom-left; canvas is top-left.
+    for (let y = 0; y < height; y++) {
+      img.data.set(px.subarray((height - 1 - y) * width * 4, (height - y) * width * 4), y * width * 4);
+    }
+    ctx.putImageData(img, 0, 0);
+    this._dirty = true;
+    return out;
+  }
+
+  clear() { this.state = null; this._dirty = true; }
+}
