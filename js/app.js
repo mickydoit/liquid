@@ -19,7 +19,7 @@ let design = null;          // the submitted, static field state
 
 const params = {
   gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
-  flow: 0.35, simple: 0, flat: false,
+  flow: 0.35, simple: 0, swell: 0, flat: false,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -50,6 +50,7 @@ function stateFromFingerprint(fp) {
   // Start empty and flood in, so a submitted design arrives rather than
   // appearing whole.
   s.simple = params.simple;
+  s.swell = params.swell;
   s.grow = 0;
   s.growTarget = 1;
   return s;
@@ -147,6 +148,7 @@ async function toggleLive() {
     },
   });
   conductor.field.simple = params.simple;
+  conductor.field.swell = params.swell;
   renderer.materialRate = 1;
   conductor.start();
   mode = 'live';
@@ -297,6 +299,14 @@ window.addEventListener('DOMContentLoaded', () => {
     if (conductor) conductor.field.simple = params.simple;
     const s = currentState();
     if (s) { s.simple = params.simple; renderer._dirty = true; }
+  });
+  // Swell is GEOMETRY too — it changes the band width per point, so it has to
+  // reach the state the exporter reads.
+  $('sl-swell').addEventListener('input', (e) => {
+    params.swell = parseFloat(e.target.value);
+    if (conductor) conductor.field.swell = params.swell;
+    const s = currentState();
+    if (s) { s.swell = params.swell; renderer._dirty = true; }
   });
   $('sl-motion').addEventListener('input', (e) => {
     params.motion = parseFloat(e.target.value);

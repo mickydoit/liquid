@@ -10,7 +10,7 @@ import { stepGrow } from './cymafield.js';
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
-  'uSimple', 'uRim', 'uDepth', 'uRefract',
+  'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
@@ -126,6 +126,7 @@ export class LiquidRenderer {
     gl.uniform1f(u.uGrow, s.grow ?? 1);
     // Simplicity is GEOMETRY, so it lives on the state the exporter reads.
     gl.uniform1f(u.uSimple, s.simple ?? 0);
+    gl.uniform1f(u.uSwell, s.swell ?? 0);
     gl.uniform1f(u.uRim, st.rim);
     gl.uniform1f(u.uDepth, st.depth);
     gl.uniform1f(u.uRefract, st.refract);

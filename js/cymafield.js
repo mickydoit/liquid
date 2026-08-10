@@ -35,6 +35,7 @@ export function idleState() {
     fine: 0,           // fine ripple detail (spectral centroid)
     chaos: 0,          // layering / instability (noisy input)
     simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
+    swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -124,6 +125,23 @@ export function psi(x, y, s) {
 // thickness is high where |Psi| is small. The band widens with amplitude:
 // louder sound sweeps liquid out of a larger area and into the figure, which
 // is exactly the "water flows into the pattern" behaviour.
+// How much the ribbon swells at a given point.
+//
+// A low-order standing wave from the SAME modal family as the figure, so the
+// thick and thin passages belong to the form rather than looking like an
+// effect laid over it. Deliberately not the true field gradient: that is the
+// physically exact choice, but it costs two extra psi evaluations inside a
+// function already called ~8x per pixel, which triples the per-pixel trig
+// budget for a difference the eye does not read.
+export function swellAt(x, y, s) {
+  const o = orders(s);
+  const u = x * 0.5 + 0.5, v = y * 0.5 + 0.5;
+  // Low frequencies relative to the figure: a few broad passages that swell
+  // and pinch, rather than many small wobbles along every ribbon.
+  return 0.5 + 0.5 * Math.cos(o.m * 0.32 * PI * u + s.phase * 0.7)
+                   * Math.cos(o.n * 0.27 * PI * v - s.phase * 0.5);
+}
+
 export function nodalThickness(x, y, s) {
   const f = Math.abs(psi(x, y, s));
   // The band is a threshold on the FIELD, not a width in space. Lowering the
@@ -132,7 +150,9 @@ export function nodalThickness(x, y, s) {
   // into a solid mass with a few holes, the inverse of the intended look.
   // Scaling with the same factor keeps the ribbon's width roughly fixed while
   // the cells grow, which is what gives broad meanders instead of a blob.
-  const band = (0.05 + 0.34 * s.amp) * orders(s).det;
+  const sw = s.swell ? swellAt(x, y, s) : 0;
+  const weight = 1 + (s.swell ?? 0) * (0.15 + 2.6 * sw - 1);
+  const band = (0.05 + 0.34 * s.amp) * orders(s).det * weight;
   let T = 1 - smoothstep(band * 0.30, band, f);
   // Soft plate boundary — the dish edge, not a hard crop.
   const r = Math.sqrt(x * x + y * y);

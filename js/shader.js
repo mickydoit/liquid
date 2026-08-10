@@ -19,7 +19,7 @@ precision highp float;
 varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
-uniform float uSimple, uRim, uDepth, uRefract;
+uniform float uSimple, uRim, uDepth, uRefract, uSwell;
 uniform float uAspect, uZoom, uGloss, uDispersion, uFlat, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
@@ -68,11 +68,25 @@ float psi(vec2 p) {
 // louder sound sweeps liquid out of a larger area and into the figure.
 float nodalAt(vec2 p) {
   float f = abs(psi(p));
+
+  // Variable line weight: a low-order standing wave from the SAME modal
+  // family, so thick and thin passages belong to the form rather than
+  // reading as an effect over it. Not the true field gradient — exact, but
+  // two extra psi evaluations inside a function already called ~8x per pixel
+  // triples the trig budget for a difference the eye does not read.
+  float detS = 1.0 - 0.68 * uSimple;
+  float mS = max(1.0, uM * detS), nS = max(0.8, uN * detS);
+  vec2 uvS = p * 0.5 + 0.5;
+  // Low frequencies relative to the figure: a few broad passages that swell
+  // and pinch, rather than many small wobbles along every ribbon.
+  float sw = 0.5 + 0.5 * cos(mS * 0.32 * PI * uvS.x + uPhase * 0.7)
+                       * cos(nS * 0.27 * PI * uvS.y - uPhase * 0.5);
+  float weight = 1.0 + uSwell * (0.15 + 2.6 * sw - 1.0);
   // The band is a threshold on the FIELD, not a width in space: gentler
   // gradients at low modal orders spread it over more area. Scaling by the
   // same detail factor keeps ribbon width roughly fixed as cells grow —
   // without it, simplifying fills the disc into a solid mass.
-  float band = (0.05 + 0.34 * uAmp) * (1.0 - 0.68 * uSimple);
+  float band = (0.05 + 0.34 * uAmp) * detS * weight;
   float T = 1.0 - smoothstep(band * 0.30, band, f);
   return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }

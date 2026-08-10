@@ -74,7 +74,14 @@ broad meanders. Complexity in a Chladni figure *is* its mode numbers, so this
 lowers them rather than blurring or hiding anything; the band width scales with
 them, or gentler gradients would spread the same threshold into a solid mass.
 
-Simplicity is geometry, so it lands on the exported vectors too.
+**Swell** varies the line weight across the figure — broad passages tapering
+to fine strands — by modulating the band with a low-order standing wave from
+the same modal family, so the thick and thin parts belong to the form rather
+than looking applied.
+
+Flow, Simplicity and Swell are all geometry, so they land on the exported
+vectors too. Gloss, Dispersion, Rim, Depth and Refraction are material, so
+they affect the screen and PNG but not the vector outlines.
 
 ## Audio mapping
 
