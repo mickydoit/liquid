@@ -129,7 +129,9 @@ float nodalAt(vec2 p) {
   // Cross-fade to the metaball form: a modal field cannot produce a single
   // fat multi-armed blob at any setting, so that shape is built directly and
   // blended in. In between, the cymatic figure still reads through it.
-  T = mix(T, blobAt(p), uForm);
+  // smoothstep, not linear: a linear blend leaves a visible ghost web
+  // behind the blob at Form 0.85-0.95.
+  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, uForm));
   return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
 
@@ -162,14 +164,31 @@ void main() {
   }
 
   if (uView >= 1.5) {
-    // Outline only: a constant-width stroke on the same contour. Thresholding
-    // |T - edge| directly would give a stroke whose width varies with the
-    // field's steepness — fat across broad passages, invisible at tight
-    // necks — so divide by the local gradient to convert it into an actual
-    // distance from the edge.
+    // CENTRELINE, not the water's edge.
+    //
+    // Stroking the boundary of a ribbon draws BOTH its sides, so every curve
+    // came out as a doubled line with a parallel twin. The reference is a
+    // single continuous curve — which is the nodal line itself, the ribbon's
+    // spine. So stroke psi = 0 directly, and for the blob form stroke its
+    // outline, since a filled mass has no spine to trace.
+    vec2 ep = vec2(px, 0.0);
+    float f0 = psi(p);
+    vec2 gp = vec2(psi(p + ep.xy) - psi(p - ep.xy),
+                   psi(p + ep.yx) - psi(p - ep.yx)) / (2.0 * px);
+    // Divide by the gradient to turn a field difference into a real distance,
+    // or the stroke fattens wherever the field happens to be shallow.
+    float dCentre = abs(f0) / max(length(gp), 1e-4);
+
     float gmag = max(length(grad) / (2.0 * px), 1e-4);
-    float dist = abs(T - 0.08) / gmag;
-    float line = 1.0 - smoothstep(uLineW * 0.5, uLineW, dist);
+    float dEdge = abs(T - 0.08) / gmag;
+
+    float d = mix(dCentre, dEdge, uForm);
+
+    // Gate by water PRESENCE as a multiplier, not by dividing the distance:
+    // the division let isolated points where the field grazes zero outside
+    // the figure sneak through as speckle dots across the plate.
+    float wet = mix(smoothstep(0.04, 0.12, T), 1.0, uForm);
+    float line = (1.0 - smoothstep(uLineW * 0.5, uLineW, d)) * wet;
     gl_FragColor = mix(vec4(mix(uGround, uInk, line), 1.0), vec4(uInk, line), uTransparent);
     return;
   }
@@ -187,8 +206,6 @@ void main() {
   vec2 shim = vec2(w1 * 0.55 + w3 * 0.45, w2 * 0.55 - w3 * 0.45) * 0.22 * inWater;
   vec3 N = normalize(vec3(-(grad.x * 26.0 + shim.x), 1.0, -(grad.y * 26.0 + shim.y)));
 
-  // A faint structured backdrop: refraction is invisible against a flat
-  // colour — there has to be something behind the water for it to bend.
   // Refraction is its own control now: how hard the ground bends through
   // the water, independent of how much that bending splits into colour.
   vec2 ruv = vUv + N.xz * T * 0.055 * uRefract * (1.0 + uDispersion * 0.4);

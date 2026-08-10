@@ -174,7 +174,12 @@ export function nodalThickness(x, y, s) {
   let T = (1 - (s.mass ?? 0)) * line + (s.mass ?? 0) * lobe;
   // Cross-fade to the metaball form. At form = 1 the shape is pure blob; in
   // between, the cymatic figure still reads through it.
-  if (s.form) T = T * (1 - s.form) + blobThickness(x, y, s) * s.form;
+  if (s.form) {
+    // smoothstep, not linear: a linear blend leaves a ghost web behind the
+    // blob at Form 0.85-0.95.
+    const w = smoothstep(0, 1, s.form);
+    T = T * (1 - w) + blobThickness(x, y, s) * w;
+  }
   // Soft plate boundary — the dish edge, not a hard crop.
   const r = Math.sqrt(x * x + y * y);
   T *= 1 - smoothstep(1.02, 1.30, r);
@@ -322,6 +327,13 @@ export function kick(state, strength = 1) {
 // than the screen, and any filament peaking below 0.5 vanished outright,
 // which is what fragmented the strokes.
 export const WATER_EDGE = 0.08;
+
+// Centreline field for the OUTLINE export: zero along the nodal line, which
+// is the ribbon's spine. Contouring the water's boundary instead draws both
+// sides of every ribbon, so each curve comes out doubled.
+export function makeCentrelineField(s) {
+  return (x, y) => (thickness(x, y, s) > 0.12 ? psi(x, y, s) : 1);
+}
 
 // Signed field for contouring: negative inside the water.
 export function makeWaterField(s, iso = WATER_EDGE) {
