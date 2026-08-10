@@ -34,6 +34,7 @@ export function idleState() {
     amp: 0,            // drives how much water is gathered into the pattern
     fine: 0,           // fine ripple detail (spectral centroid)
     chaos: 0,          // layering / instability (noisy input)
+    simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -46,15 +47,31 @@ export function idleState() {
   };
 }
 
+// How much of the modal order survives. Complexity in a Chladni figure IS
+// its mode numbers — a high-order plate has many small cells — so the way to
+// simplify is to lower the orders, not to blur or hide anything. Floors keep
+// a recognisable figure at the simple end instead of collapsing to a blob.
+export function orders(s) {
+  const det = 1 - 0.68 * (s.simple ?? 0);
+  return {
+    m: Math.max(1.0, s.m * det),
+    n: Math.max(0.8, s.n * det),
+    kr: Math.max(2.2, s.kr * det),
+    ma: Math.max(1.0, s.ma * det),
+    det,
+  };
+}
+
 // Modal superposition. Continuous in every parameter so the topology can
 // morph rather than switch.
 export function psi(x, y, s) {
+  const o = orders(s);
   // Square plate (classic Chladni): the antisymmetric combination is what
   // gives the familiar crosses, lattices and stars. A single cos*cos product
   // only ever yields a plain grid.
   const u = x * 0.5 + 0.5, v = y * 0.5 + 0.5;
-  const sq = Math.cos(s.m * PI * u) * Math.cos(s.n * PI * v)
-           - Math.cos(s.n * PI * u) * Math.cos(s.m * PI * v);
+  const sq = Math.cos(o.m * PI * u) * Math.cos(o.n * PI * v)
+           - Math.cos(o.n * PI * u) * Math.cos(o.m * PI * v);
 
   // Circular membrane. A true Bessel J_m is far too costly per pixel; its
   // ring structure is captured by a decaying cosine, which is all the
@@ -65,28 +82,30 @@ export function psi(x, y, s) {
   // theta = +-pi draws a hard seam straight across the figure. cos(ma*th) is
   // only periodic for integer ma — and ma has to stay continuous so the
   // angular order can morph — so blend the two neighbouring integer orders.
-  const m0 = Math.floor(s.ma), fm = s.ma - m0;
+  const m0 = Math.floor(o.ma), fm = o.ma - m0;
   const ang = Math.cos(m0 * th + s.phase) * (1 - fm)
             + Math.cos((m0 + 1) * th + s.phase) * fm;
-  const rad = Math.cos(s.kr * r - s.ma * PI * 0.5 - PI * 0.25)
-            / Math.sqrt(1 + s.kr * r * 0.6) * ang;
+  const rad = Math.cos(o.kr * r - o.ma * PI * 0.5 - PI * 0.25)
+            / Math.sqrt(1 + o.kr * r * 0.6) * ang;
 
   let f = sq * (1 - s.mix) + rad * s.mix * 1.7;
 
   // Fine structure from brightness — a higher-order mode laid over the
   // fundamental, drifting slowly so the surface never looks frozen.
+  // Fine detail and layering are both forms of complexity, so they fade with
+  // the same control — otherwise "simple" would still carry busy overlays.
   if (s.fine > 0) {
-    f += s.fine * 0.30
-       * Math.cos(s.m * 2.7 * PI * u + s.t * 0.21)
-       * Math.cos(s.n * 2.7 * PI * v - s.t * 0.17);
+    f += s.fine * 0.30 * o.det
+       * Math.cos(o.m * 2.7 * PI * u + s.t * 0.21)
+       * Math.cos(o.n * 2.7 * PI * v - s.t * 0.17);
   }
 
   // Noisy input layers a second, detuned mode over the first, so broadband
   // sound reads as an unstable / doubled figure instead of a clean one.
   if (s.chaos > 0) {
-    f += s.chaos * 0.45
-       * (Math.cos((s.m + 1.7) * PI * u) * Math.cos((s.n + 0.6) * PI * v)
-        - Math.cos((s.n + 0.6) * PI * u) * Math.cos((s.m + 1.7) * PI * v));
+    f += s.chaos * 0.45 * o.det
+       * (Math.cos((o.m + 1.7) * PI * u) * Math.cos((o.n + 0.6) * PI * v)
+        - Math.cos((o.n + 0.6) * PI * u) * Math.cos((o.m + 1.7) * PI * v));
   }
 
   // A transient sends a ring travelling outward, decaying in time and radius.
@@ -107,7 +126,13 @@ export function psi(x, y, s) {
 // is exactly the "water flows into the pattern" behaviour.
 export function nodalThickness(x, y, s) {
   const f = Math.abs(psi(x, y, s));
-  const band = 0.05 + 0.34 * s.amp;
+  // The band is a threshold on the FIELD, not a width in space. Lowering the
+  // modal orders makes the field's gradients gentler, so the same threshold
+  // spreads over far more area — simplifying without this turns the figure
+  // into a solid mass with a few holes, the inverse of the intended look.
+  // Scaling with the same factor keeps the ribbon's width roughly fixed while
+  // the cells grow, which is what gives broad meanders instead of a blob.
+  const band = (0.05 + 0.34 * s.amp) * orders(s).det;
   let T = 1 - smoothstep(band * 0.30, band, f);
   // Soft plate boundary — the dish edge, not a hard crop.
   const r = Math.sqrt(x * x + y * y);

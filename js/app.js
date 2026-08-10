@@ -18,7 +18,8 @@ let recordStart = 0;
 let design = null;          // the submitted, static field state
 
 const params = {
-  gloss: 1, dispersion: 1, flow: 0.35, flat: false,
+  gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
+  flow: 0.35, simple: 0, flat: false,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -48,6 +49,7 @@ function stateFromFingerprint(fp) {
   s.amp = Math.min(1, Math.max(s.amp, params.flow * 1.6));
   // Start empty and flood in, so a submitted design arrives rather than
   // appearing whole.
+  s.simple = params.simple;
   s.grow = 0;
   s.growTarget = 1;
   return s;
@@ -57,6 +59,9 @@ function applyStyle() {
   renderer.setStyle({
     gloss: params.gloss,
     dispersion: params.dispersion,
+    rim: params.rim,
+    depth: params.depth,
+    refract: params.refract,
     flat: params.flat,
     transparent: params.transparent,
     ground: hex(params.ground),
@@ -141,6 +146,7 @@ async function toggleLive() {
               : 'Live — holding · shimmering');
     },
   });
+  conductor.field.simple = params.simple;
   renderer.materialRate = 1;
   conductor.start();
   mode = 'live';
@@ -265,7 +271,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (recorder) recorder.discard(); showButtons(); setStatus('Video discarded');
   });
 
-  for (const [id, key, scale] of [['sl-gloss', 'gloss', 1], ['sl-dispersion', 'dispersion', 1]]) {
+  for (const [id, key, scale] of [['sl-gloss', 'gloss', 1], ['sl-dispersion', 'dispersion', 1],
+                                  ['sl-rim', 'rim', 1], ['sl-depth', 'depth', 1],
+                                  ['sl-refract', 'refract', 1]]) {
     $(id).addEventListener('input', (e) => {
       params[key] = parseFloat(e.target.value) * scale;
       applyStyle();
@@ -280,6 +288,15 @@ window.addEventListener('DOMContentLoaded', () => {
       s.amp = clamp01(params.flow * 1.6);
       renderer.setField(s, 'material');
     }
+  });
+  // Simplicity is GEOMETRY, not style: it lowers the modal orders, so it has
+  // to land on the state the vector export reads or a simplified design would
+  // export at full complexity.
+  $('sl-simple').addEventListener('input', (e) => {
+    params.simple = parseFloat(e.target.value);
+    if (conductor) conductor.field.simple = params.simple;
+    const s = currentState();
+    if (s) { s.simple = params.simple; renderer._dirty = true; }
   });
   $('sl-motion').addEventListener('input', (e) => {
     params.motion = parseFloat(e.target.value);

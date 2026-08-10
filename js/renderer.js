@@ -10,6 +10,7 @@ import { stepGrow } from './cymafield.js';
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
+  'uSimple', 'uRim', 'uDepth', 'uRefract',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
@@ -77,7 +78,8 @@ export class LiquidRenderer {
     this._dirty = true;
 
     this.style = {
-      gloss: 1, dispersion: 1, flat: false, transparent: false,
+      gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
+      flat: false, transparent: false,
       ground: [0.68, 0.73, 0.78], ink: [0.07, 0.09, 0.11], deep: [0.49, 0.59, 0.69],
     };
 
@@ -122,6 +124,11 @@ export class LiquidRenderer {
     gl.uniform1f(u.uRipAmt, s.ripAmt); gl.uniform1f(u.uRipT, s.ripT);
     gl.uniform1f(u.uMatTime, this._matTime);
     gl.uniform1f(u.uGrow, s.grow ?? 1);
+    // Simplicity is GEOMETRY, so it lives on the state the exporter reads.
+    gl.uniform1f(u.uSimple, s.simple ?? 0);
+    gl.uniform1f(u.uRim, st.rim);
+    gl.uniform1f(u.uDepth, st.depth);
+    gl.uniform1f(u.uRefract, st.refract);
     gl.uniform1f(u.uAspect, aspect);
     gl.uniform1f(u.uZoom, this.zoom * (useInset ? this.insetZoom : 1));
     gl.uniform2fv(u.uPan, useInset

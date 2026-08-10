@@ -19,6 +19,7 @@ precision highp float;
 varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
+uniform float uSimple, uRim, uDepth, uRefract;
 uniform float uAspect, uZoom, uGloss, uDispersion, uFlat, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
@@ -27,24 +28,37 @@ const float PI = 3.14159265359;
 
 float psi(vec2 p) {
   vec2 uv = p * 0.5 + 0.5;
-  float sq = cos(uM * PI * uv.x) * cos(uN * PI * uv.y)
-           - cos(uN * PI * uv.x) * cos(uM * PI * uv.y);
+
+  // Complexity in a Chladni figure IS its mode numbers — a high-order plate
+  // has many small cells — so simplifying means LOWERING the orders, not
+  // blurring or hiding anything. Floors keep a recognisable figure at the
+  // simple end rather than collapsing it to a blob.
+  float det = 1.0 - 0.68 * uSimple;
+  float m_ = max(1.0, uM * det);
+  float n_ = max(0.8, uN * det);
+  float kr_ = max(2.2, uKr * det);
+  float ma_ = max(1.0, uMa * det);
+
+  float sq = cos(m_ * PI * uv.x) * cos(n_ * PI * uv.y)
+           - cos(n_ * PI * uv.x) * cos(m_ * PI * uv.y);
 
   float r = length(p);
   float th = atan(p.y, p.x);
   // Periodic in theta: cos(uMa*th) is periodic only for integer uMa, and a
   // non-integer order tears along the atan branch cut. Blending the two
   // neighbouring integer orders keeps it smooth AND seamless.
-  float m0 = floor(uMa), fm = uMa - m0;
+  float m0 = floor(ma_), fm = ma_ - m0;
   float ang = cos(m0 * th + uPhase) * (1.0 - fm) + cos((m0 + 1.0) * th + uPhase) * fm;
-  float rad = cos(uKr * r - uMa * PI * 0.5 - PI * 0.25)
-            / sqrt(1.0 + uKr * r * 0.6) * ang;
+  float rad = cos(kr_ * r - ma_ * PI * 0.5 - PI * 0.25)
+            / sqrt(1.0 + kr_ * r * 0.6) * ang;
 
   float f = sq * (1.0 - uMix) + rad * uMix * 1.7;
-  f += uFine * 0.30 * cos(uM * 2.7 * PI * uv.x + uTimeC * 0.21)
-                    * cos(uN * 2.7 * PI * uv.y - uTimeC * 0.17);
-  f += uChaos * 0.45 * (cos((uM + 1.7) * PI * uv.x) * cos((uN + 0.6) * PI * uv.y)
-                      - cos((uN + 0.6) * PI * uv.x) * cos((uM + 1.7) * PI * uv.y));
+  // Fine detail and layering are complexity too, so they fade with the same
+  // control — otherwise "simple" would still carry busy overlays.
+  f += uFine * 0.30 * det * cos(m_ * 2.7 * PI * uv.x + uTimeC * 0.21)
+                          * cos(n_ * 2.7 * PI * uv.y - uTimeC * 0.17);
+  f += uChaos * 0.45 * det * (cos((m_ + 1.7) * PI * uv.x) * cos((n_ + 0.6) * PI * uv.y)
+                            - cos((n_ + 0.6) * PI * uv.x) * cos((m_ + 1.7) * PI * uv.y));
   f += uRipAmt * sin(14.0 * r - uRipT * 9.0) * exp(-uRipT * 1.6) * exp(-r * 0.7);
   return f * (0.88 + 0.12 * sin(uTimeC * 0.9));
 }
@@ -54,7 +68,11 @@ float psi(vec2 p) {
 // louder sound sweeps liquid out of a larger area and into the figure.
 float nodalAt(vec2 p) {
   float f = abs(psi(p));
-  float band = 0.05 + 0.34 * uAmp;
+  // The band is a threshold on the FIELD, not a width in space: gentler
+  // gradients at low modal orders spread it over more area. Scaling by the
+  // same detail factor keeps ribbon width roughly fixed as cells grow —
+  // without it, simplifying fills the disc into a solid mass.
+  float band = (0.05 + 0.34 * uAmp) * (1.0 - 0.68 * uSimple);
   float T = 1.0 - smoothstep(band * 0.30, band, f);
   return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
@@ -103,7 +121,9 @@ void main() {
 
   // A faint structured backdrop: refraction is invisible against a flat
   // colour — there has to be something behind the water for it to bend.
-  vec2 ruv = vUv + N.xz * T * 0.055 * (1.0 + uDispersion * 0.4);
+  // Refraction is its own control now: how hard the ground bends through
+  // the water, independent of how much that bending splits into colour.
+  vec2 ruv = vUv + N.xz * T * 0.055 * uRefract * (1.0 + uDispersion * 0.4);
   float bandY = 0.5 + 0.5 * sin(ruv.y * 11.0 + ruv.x * 3.0);
   float vign = 1.0 - 0.35 * length(vUv - 0.5);
   vec3 back = uGround * (vign - 0.035 + 0.05 * bandY);
@@ -114,7 +134,10 @@ void main() {
   float caustic = clamp(-lap * 9.0, 0.0, 1.0)
                 * (0.82 + 0.18 * sin(mt * 1.25 + p.x * 4.0 + p.y * 3.1));
 
-  vec3 body = mix(back, uDeep, clamp(T * 0.55, 0.0, 1.0));
+  // Depth: how heavily the water takes on its own colour with thickness.
+  // High values give the near-black interiors of the reference, where the
+  // shape reads almost entirely from its rim.
+  vec3 body = mix(back, uDeep, clamp(T * 0.55 * uDepth, 0.0, 1.0));
   body += caustic * 0.28 * uGloss;
   // Travelling caustics: the clearest signal the liquid is alive while held.
   body += pow(max(0.0, w1 * w2), 3.0) * inWater * 0.13 * uGloss;
@@ -134,9 +157,15 @@ void main() {
   float a = atan(grad.y, grad.x) * 2.0;
   vec3 iri = vec3(sin(a), sin(a + 2.094), sin(a + 4.188)) * 0.5 + 0.5;
 
+  // Rim: the bright meniscus tracing the edge. In the reference this is what
+  // carries the whole silhouette, so it gets its own control rather than
+  // riding on Gloss.
+  float rim = pow(clamp(length(grad) * 7.0, 0.0, 1.0), 0.65);
+
   vec3 col = body
            + vec3(1.0) * spec * 0.85 * uGloss
            + vec3(1.0) * fres * 0.16 * uGloss
+           + vec3(1.0) * rim * fres * uRim * 0.9
            + (iri - 0.5) * curv * fres * uDispersion * 0.34;
 
   float cov = smoothstep(0.02, 0.14, T);   // ramp centred on WATER_EDGE

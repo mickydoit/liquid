@@ -61,6 +61,21 @@ water moves, at the Motion rate.
 there is also a Scale slider. The vector export follows the on-screen framing,
 so a zoomed SVG matches what you see.
 
+## Controls
+
+**Water** — Gloss, Dispersion, Rim, Depth, Refraction shape the material.
+Near-black interiors with a crisp bright edge (high Depth + high Rim) give the
+glassy look; Refraction is how hard the ground bends, separately from how much
+that bending splits into colour.
+
+**Flow** sets how much water is gathered into the figure — i.e. ribbon weight.
+**Simplicity** lowers the modal orders, trading a dense nodal lattice for a few
+broad meanders. Complexity in a Chladni figure *is* its mode numbers, so this
+lowers them rather than blurring or hiding anything; the band width scales with
+them, or gentler gradients would spread the same threshold into a solid mass.
+
+Simplicity is geometry, so it lands on the exported vectors too.
+
 ## Audio mapping
 
 | feature | drives |
