@@ -1,5 +1,5 @@
 import { VERT, FRAG } from './shader.js';
-import { stepGrow } from './cymafield.js';
+import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -11,7 +11,7 @@ const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
-  'uView', 'uLineW', 'uBackTex', 'uHasBack',
+  'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass', 'uForm', 'uBlob', 'uBlobN', 'uBlobK',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
@@ -149,6 +149,24 @@ export class LiquidRenderer {
     // Simplicity is GEOMETRY, so it lives on the state the exporter reads.
     gl.uniform1f(u.uSimple, s.simple ?? 0);
     gl.uniform1f(u.uSwell, s.swell ?? 0);
+    gl.uniform1f(u.uMass, s.mass ?? 0);
+    gl.uniform1f(u.uForm, s.form ?? 0);
+    // Only rebuild the circles when the form is actually in play.
+    if (s.form > 0) {
+      const cs = blobCircles(s);
+      const arr = this._blobArr || (this._blobArr = new Float32Array(BLOB_MAX * 3));
+      arr.fill(0);
+      const n = Math.min(cs.length, BLOB_MAX);
+      for (let i = 0; i < n; i++) {
+        arr[i * 3] = cs[i].x; arr[i * 3 + 1] = cs[i].y; arr[i * 3 + 2] = cs[i].r;
+      }
+      gl.uniform3fv(u.uBlob, arr);
+      gl.uniform1i(u.uBlobN, n);
+      gl.uniform1f(u.uBlobK, 0.15 + 0.08 * (1 - (s.simple ?? 0)));
+    } else {
+      gl.uniform1i(u.uBlobN, 1);
+      gl.uniform1f(u.uBlobK, 0.2);
+    }
     gl.uniform1f(u.uHasBack, this._backTex ? 1 : 0);
     if (this._backTex) {
       gl.activeTexture(gl.TEXTURE0);

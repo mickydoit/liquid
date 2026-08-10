@@ -19,7 +19,7 @@ let design = null;          // the submitted, static field state
 
 const params = {
   gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
-  flow: 0.35, simple: 0, swell: 0, view: 0, lineW: 0.012,
+  flow: 0.35, simple: 0, swell: 0, mass: 0, form: 0, view: 0, lineW: 0.012,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -51,6 +51,8 @@ function stateFromFingerprint(fp) {
   // appearing whole.
   s.simple = params.simple;
   s.swell = params.swell;
+  s.mass = params.mass;
+  s.form = params.form;
   s.grow = 0;
   s.growTarget = 1;
   return s;
@@ -150,6 +152,8 @@ async function toggleLive() {
   });
   conductor.field.simple = params.simple;
   conductor.field.swell = params.swell;
+  conductor.field.mass = params.mass;
+  conductor.field.form = params.form;
   renderer.materialRate = 1;
   conductor.start();
   mode = 'live';
@@ -308,6 +312,18 @@ window.addEventListener('DOMContentLoaded', () => {
     if (conductor) conductor.field.swell = params.swell;
     const s = currentState();
     if (s) { s.swell = params.swell; renderer._dirty = true; }
+  });
+  $('sl-mass').addEventListener('input', (e) => {
+    params.mass = parseFloat(e.target.value);
+    if (conductor) conductor.field.mass = params.mass;
+    const s = currentState();
+    if (s) { s.mass = params.mass; renderer._dirty = true; }
+  });
+  $('sl-form').addEventListener('input', (e) => {
+    params.form = parseFloat(e.target.value);
+    if (conductor) conductor.field.form = params.form;
+    const s = currentState();
+    if (s) { s.form = params.form; renderer._dirty = true; }
   });
   $('sl-motion').addEventListener('input', (e) => {
     params.motion = parseFloat(e.target.value);

@@ -84,6 +84,16 @@ liquid then refracts — that is what makes it bend type sitting behind it. With
 no backdrop there is nothing to bend, so refraction is invisible however high
 you push it.
 
+**Form** cross-fades from the cymatic field to a metaball blob. This exists
+because a modal field only has two topologies available: water on the nodes is
+a web of closed loops, water on the antinodes is a field of islands (one peak
+per cell). Neither is a single fat multi-armed blob however far it is
+simplified — that shape is a metaball, a different construction. So the blob
+is built directly from the same modal numbers and blended in; part-way, the
+cymatic figure still reads through it.
+
+**Mass** moves the water between the nodes and the antinodes.
+
 **Swell** varies the line weight across the figure — broad passages tapering
 to fine strands — by modulating the band with a low-order standing wave from
 the same modal family, so the thick and thin parts belong to the form rather

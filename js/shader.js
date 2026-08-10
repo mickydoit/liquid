@@ -20,6 +20,11 @@ varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
 uniform float uSimple, uRim, uDepth, uRefract, uSwell;
+uniform float uMass;        // 0 = water on the nodes, 1 = on the antinodes
+uniform float uForm;        // 0 = cymatic field, 1 = a metaball blob
+uniform vec3 uBlob[10];     // xy = centre, z = radius
+uniform int uBlobN;
+uniform float uBlobK;       // smooth-union blend radius
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
@@ -73,6 +78,22 @@ float psi(vec2 p) {
 // Water is driven off the antinodes and collects along the NODAL lines, so
 // thickness is high where |psi| is small. The band widens with amplitude:
 // louder sound sweeps liquid out of a larger area and into the figure.
+// Polynomial smooth minimum: blending circle SDFs with this rather than a
+// hard min is what produces the tapered necks between lobes.
+float sminf(float a, float b, float k) {
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+float blobAt(vec2 p) {
+  float d = length(p - uBlob[0].xy) - uBlob[0].z;
+  for (int i = 1; i < 10; i++) {
+    if (i >= uBlobN) break;
+    d = sminf(d, length(p - uBlob[i].xy) - uBlob[i].z, uBlobK);
+  }
+  return 1.0 - smoothstep(-0.012, 0.012, d);
+}
+
 float nodalAt(vec2 p) {
   float f = abs(psi(p));
 
@@ -94,7 +115,21 @@ float nodalAt(vec2 p) {
   // same detail factor keeps ribbon width roughly fixed as cells grow —
   // without it, simplifying fills the disc into a solid mass.
   float band = (0.05 + 0.34 * uAmp) * detS * weight;
-  float T = 1.0 - smoothstep(band * 0.30, band, f);
+
+  // WHICH SIDE of the field holds the water. On the NODES the wet set is a
+  // nodal line network — always a web of closed loops, because that is what a
+  // nodal set IS, so simplifying can never turn it into a few solid lobes. On
+  // the ANTINODES it is the field's peaks: a handful of fat rounded masses
+  // joined by necks, which is the metaball topology.
+  float line = 1.0 - smoothstep(band * 0.30, band, f);
+  float thr = (0.62 - 0.42 * uAmp) / max(0.3, weight);
+  float soft = 0.10 * (1.0 + uSimple);
+  float lobe = smoothstep(thr - soft, thr + soft, f);
+  float T = mix(line, lobe, uMass);
+  // Cross-fade to the metaball form: a modal field cannot produce a single
+  // fat multi-armed blob at any setting, so that shape is built directly and
+  // blended in. In between, the cymatic figure still reads through it.
+  T = mix(T, blobAt(p), uForm);
   return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
 
