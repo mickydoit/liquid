@@ -20,7 +20,11 @@ varying vec2 vUv;
 uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
 uniform float uSimple, uRim, uDepth, uRefract, uSwell;
-uniform float uAspect, uZoom, uGloss, uDispersion, uFlat, uTransparent;
+uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
+uniform float uLineW;       // outline stroke width, in world units
+uniform sampler2D uBackTex; // optional backdrop the water refracts
+uniform float uHasBack;
+uniform float uAspect, uZoom, uGloss, uDispersion, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
 
@@ -33,11 +37,14 @@ float psi(vec2 p) {
   // has many small cells — so simplifying means LOWERING the orders, not
   // blurring or hiding anything. Floors keep a recognisable figure at the
   // simple end rather than collapsing it to a blob.
-  float det = 1.0 - 0.68 * uSimple;
-  float m_ = max(1.0, uM * det);
-  float n_ = max(0.8, uN * det);
-  float kr_ = max(2.2, uKr * det);
-  float ma_ = max(1.0, uMa * det);
+  // Reaches much further down than before, but the floors are what keep a
+  // blobby metaball character at the extreme instead of collapsing to a disc:
+  // a couple of lobes still beat against each other.
+  float det = 1.0 - 0.86 * uSimple;
+  float m_ = max(0.55, uM * det);
+  float n_ = max(0.45, uN * det);
+  float kr_ = max(1.3, uKr * det);
+  float ma_ = max(0.7, uMa * det);
 
   float sq = cos(m_ * PI * uv.x) * cos(n_ * PI * uv.y)
            - cos(n_ * PI * uv.x) * cos(m_ * PI * uv.y);
@@ -74,8 +81,8 @@ float nodalAt(vec2 p) {
   // reading as an effect over it. Not the true field gradient — exact, but
   // two extra psi evaluations inside a function already called ~8x per pixel
   // triples the trig budget for a difference the eye does not read.
-  float detS = 1.0 - 0.68 * uSimple;
-  float mS = max(1.0, uM * detS), nS = max(0.8, uN * detS);
+  float detS = 1.0 - 0.86 * uSimple;
+  float mS = max(0.55, uM * detS), nS = max(0.45, uN * detS);
   vec2 uvS = p * 0.5 + 0.5;
   // Low frequencies relative to the figure: a few broad passages that swell
   // and pinch, rather than many small wobbles along every ribbon.
@@ -105,10 +112,13 @@ void main() {
   float T = waterAt(p);
   float px = 1.6 / (uZoom * 420.0);
 
-  if (uFlat > 0.5) {
-    // Exactly the silhouette the vector export emits, so what is on screen
-    // and what lands in the SVG are the same shape.
-    // ⚠ Centred on WATER_EDGE (0.08) in js/cymafield.js — the same value the
+  vec2 e = vec2(px, 0.0);
+  vec2 grad = vec2(waterAt(p + e.xy) - waterAt(p - e.xy),
+                   waterAt(p + e.yx) - waterAt(p - e.yx));
+
+  if (uView > 0.5 && uView < 1.5) {
+    // Filled silhouette — exactly what the flat vector export emits.
+    // ⚠ Centred on WATER_EDGE (0.08) in js/cymafield.js, the same value the
     // coverage ramp below uses and the exporter contours. All three must
     // agree or the export is a different weight from the screen.
     float m = smoothstep(0.05, 0.11, T);
@@ -116,9 +126,18 @@ void main() {
     return;
   }
 
-  vec2 e = vec2(px, 0.0);
-  vec2 grad = vec2(waterAt(p + e.xy) - waterAt(p - e.xy),
-                   waterAt(p + e.yx) - waterAt(p - e.yx));
+  if (uView >= 1.5) {
+    // Outline only: a constant-width stroke on the same contour. Thresholding
+    // |T - edge| directly would give a stroke whose width varies with the
+    // field's steepness — fat across broad passages, invisible at tight
+    // necks — so divide by the local gradient to convert it into an actual
+    // distance from the edge.
+    float gmag = max(length(grad) / (2.0 * px), 1e-4);
+    float dist = abs(T - 0.08) / gmag;
+    float line = 1.0 - smoothstep(uLineW * 0.5, uLineW, dist);
+    gl_FragColor = mix(vec4(mix(uGround, uInk, line), 1.0), vec4(uInk, line), uTransparent);
+    return;
+  }
 
   // Internal surface motion, LIGHTING ONLY — never applied to thickness T, so
   // the silhouette, coverage and vector export stay bit-identical while the
@@ -138,10 +157,24 @@ void main() {
   // Refraction is its own control now: how hard the ground bends through
   // the water, independent of how much that bending splits into colour.
   vec2 ruv = vUv + N.xz * T * 0.055 * uRefract * (1.0 + uDispersion * 0.4);
-  float bandY = 0.5 + 0.5 * sin(ruv.y * 11.0 + ruv.x * 3.0);
   float vign = 1.0 - 0.35 * length(vUv - 0.5);
-  vec3 back = uGround * (vign - 0.035 + 0.05 * bandY);
-  vec3 backPlain = uGround * (1.0 - 0.35 * length(vUv - 0.5));
+
+  // With a backdrop loaded, the water refracts THAT — which is what makes it
+  // bend type sitting behind it, the way the reference does. Sampled per
+  // channel at slightly different offsets so the displacement itself splits
+  // into colour at steep angles, rather than colour being painted on.
+  vec3 back, backPlain;
+  if (uHasBack > 0.5) {
+    float sp = uDispersion * 0.004 * T;
+    back = vec3(texture2D(uBackTex, ruv + N.xz * sp).r,
+                texture2D(uBackTex, ruv).g,
+                texture2D(uBackTex, ruv - N.xz * sp).b);
+    backPlain = texture2D(uBackTex, vUv).rgb;
+  } else {
+    float bandY = 0.5 + 0.5 * sin(ruv.y * 11.0 + ruv.x * 3.0);
+    back = uGround * (vign - 0.035 + 0.05 * bandY);
+    backPlain = uGround * (1.0 - 0.35 * length(vUv - 0.5));
+  }
 
   float lap = waterAt(p + e.xy) + waterAt(p - e.xy)
             + waterAt(p + e.yx) + waterAt(p - e.yx) - 4.0 * T;

@@ -74,6 +74,16 @@ broad meanders. Complexity in a Chladni figure *is* its mode numbers, so this
 lowers them rather than blurring or hiding anything; the band width scales with
 them, or gentler gradients would spread the same threshold into a solid mass.
 
+**View** switches between the shaded water, the filled silhouette and an
+outline-only stroke — the latter two are exactly what Flat SVG and Outline SVG
+emit, so you can see the export before making it. **Line weight** sets the
+outline's stroke.
+
+**Backdrop image** (Colour section) puts a picture behind the water, which the
+liquid then refracts — that is what makes it bend type sitting behind it. With
+no backdrop there is nothing to bend, so refraction is invisible however high
+you push it.
+
 **Swell** varies the line weight across the figure — broad passages tapering
 to fine strands — by modulating the band with a low-order standing wave from
 the same modal family, so the thick and thin parts belong to the form rather

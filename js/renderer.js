@@ -11,7 +11,8 @@ const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
-  'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
+  'uView', 'uLineW', 'uBackTex', 'uHasBack',
+  'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
 
@@ -79,7 +80,7 @@ export class LiquidRenderer {
 
     this.style = {
       gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
-      flat: false, transparent: false,
+      view: 0, lineW: 0.012, transparent: false,
       ground: [0.68, 0.73, 0.78], ink: [0.07, 0.09, 0.11], deep: [0.49, 0.59, 0.69],
     };
 
@@ -108,6 +109,27 @@ export class LiquidRenderer {
   }
 
   setStyle(patch) { Object.assign(this.style, patch); this._dirty = true; }
+
+  // A backdrop the water refracts. Without one there is nothing behind the
+  // liquid to bend, so refraction is invisible no matter how strong — which
+  // is the whole reason the reference reads as glass over type.
+  setBackdrop(img) {
+    const gl = this.gl;
+    if (this._backTex) { gl.deleteTexture(this._backTex); this._backTex = null; }
+    if (img) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      // NPOT-safe: clamp + linear, no mipmaps.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this._backTex = t;
+    }
+    this._dirty = true;
+  }
   setFrameSink(fn) { this._frameSink = fn; }
 
   // `useInset` is false for exports: the chrome offset exists to dodge the
@@ -127,6 +149,12 @@ export class LiquidRenderer {
     // Simplicity is GEOMETRY, so it lives on the state the exporter reads.
     gl.uniform1f(u.uSimple, s.simple ?? 0);
     gl.uniform1f(u.uSwell, s.swell ?? 0);
+    gl.uniform1f(u.uHasBack, this._backTex ? 1 : 0);
+    if (this._backTex) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._backTex);
+      gl.uniform1i(u.uBackTex, 0);
+    }
     gl.uniform1f(u.uRim, st.rim);
     gl.uniform1f(u.uDepth, st.depth);
     gl.uniform1f(u.uRefract, st.refract);
@@ -137,7 +165,8 @@ export class LiquidRenderer {
       : this.pan);
     gl.uniform1f(u.uGloss, st.gloss);
     gl.uniform1f(u.uDispersion, st.dispersion);
-    gl.uniform1f(u.uFlat, st.flat ? 1 : 0);
+    gl.uniform1f(u.uView, st.view);
+    gl.uniform1f(u.uLineW, st.lineW);
     gl.uniform1f(u.uTransparent, st.transparent ? 1 : 0);
     gl.uniform3fv(u.uGround, st.ground);
     gl.uniform3fv(u.uInk, st.ink);

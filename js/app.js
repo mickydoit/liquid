@@ -19,7 +19,7 @@ let design = null;          // the submitted, static field state
 
 const params = {
   gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
-  flow: 0.35, simple: 0, swell: 0, flat: false,
+  flow: 0.35, simple: 0, swell: 0, view: 0, lineW: 0.012,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -63,7 +63,8 @@ function applyStyle() {
     rim: params.rim,
     depth: params.depth,
     refract: params.refract,
-    flat: params.flat,
+    view: params.view,
+    lineW: params.lineW,
     transparent: params.transparent,
     ground: hex(params.ground),
     ink: hex(params.ink),
@@ -318,7 +319,24 @@ window.addEventListener('DOMContentLoaded', () => {
     renderer.resetView();
     $('sl-scale').value = 1;
   });
-  $('chk-flat').addEventListener('change', (e) => { params.flat = e.target.checked; applyStyle(); });
+  $('sel-view').addEventListener('change', (e) => {
+    params.view = parseFloat(e.target.value); applyStyle();
+  });
+  $('sl-linew').addEventListener('input', (e) => {
+    params.lineW = parseFloat(e.target.value); applyStyle();
+  });
+  $('lbl-backdrop').addEventListener('click', () => $('file-backdrop').click());
+  $('file-backdrop').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const img = new Image();
+    img.onload = () => { renderer.setBackdrop(img); setStatus('Backdrop loaded — the water now refracts it'); };
+    img.onerror = () => setStatus('Could not read that image');
+    img.src = URL.createObjectURL(f);
+  });
+  $('btn-backdrop-clear').addEventListener('click', () => {
+    renderer.setBackdrop(null); $('file-backdrop').value = ''; setStatus('Backdrop removed');
+  });
   $('chk-transparent').addEventListener('change', (e) => { params.transparent = e.target.checked; });
   for (const [id, key] of [['col-ground', 'ground'], ['col-ink', 'ink'], ['col-deep', 'deep']]) {
     $(id).addEventListener('input', (e) => { params[key] = e.target.value; applyStyle(); });

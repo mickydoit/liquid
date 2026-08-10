@@ -53,12 +53,14 @@ export function idleState() {
 // simplify is to lower the orders, not to blur or hide anything. Floors keep
 // a recognisable figure at the simple end instead of collapsing to a blob.
 export function orders(s) {
-  const det = 1 - 0.68 * (s.simple ?? 0);
+  // Reaches much further down than before; the floors are what keep a blobby
+  // metaball character at the extreme rather than collapsing to a plain disc.
+  const det = 1 - 0.86 * (s.simple ?? 0);
   return {
-    m: Math.max(1.0, s.m * det),
-    n: Math.max(0.8, s.n * det),
-    kr: Math.max(2.2, s.kr * det),
-    ma: Math.max(1.0, s.ma * det),
+    m: Math.max(0.55, s.m * det),
+    n: Math.max(0.45, s.n * det),
+    kr: Math.max(1.3, s.kr * det),
+    ma: Math.max(0.7, s.ma * det),
     det,
   };
 }

@@ -76,7 +76,14 @@
       <label>Simplicity<input type="range" id="sl-simple" min="0" max="1" step="0.02" value="0"></label>
       <label>Swell<input type="range" id="sl-swell" min="0" max="1" step="0.02" value="0"></label>
       <label>Motion<input type="range" id="sl-motion" min="0" max="1" step="0.02" value="0.35"></label>
-      <label class="check"><input type="checkbox" id="chk-flat"> Flat view (what the vector export emits)</label>
+      <label>View
+        <select id="sel-view">
+          <option value="0" selected>Water</option>
+          <option value="1">Flat fill (what Flat SVG emits)</option>
+          <option value="2">Outline (what Outline SVG emits)</option>
+        </select>
+      </label>
+      <label>Line weight<input type="range" id="sl-linew" min="0.003" max="0.05" step="0.001" value="0.012"></label>
     </details>
 
     <details open>
@@ -91,6 +98,10 @@
       <label class="swatch">Ground<input type="color" id="col-ground" value="#aeb8bf"></label>
       <label class="swatch">Ink<input type="color" id="col-ink" value="#12181d"></label>
       <label class="swatch">Depth<input type="color" id="col-deep" value="#7d94a6"></label>
+      <label class="check" id="lbl-backdrop">Backdrop image (the water refracts it)
+        <input type="file" id="file-backdrop" accept="image/*" hidden>
+      </label>
+      <button id="btn-backdrop-clear" class="wide">Remove backdrop</button>
     </details>
 
     <details>
