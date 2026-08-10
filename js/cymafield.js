@@ -199,7 +199,17 @@ export function kick(state, strength = 1) {
   return state;
 }
 
+// Where the water's edge sits, as a thickness value.
+//
+// ONE canonical number for three consumers that must agree: the shaded view's
+// coverage ramp, the flat view's silhouette, and the contour the vector
+// export traces. They had drifted — the export cut at 0.5 while the shaded
+// view painted everything above ~0.08 — so exports came out markedly thinner
+// than the screen, and any filament peaking below 0.5 vanished outright,
+// which is what fragmented the strokes.
+export const WATER_EDGE = 0.08;
+
 // Signed field for contouring: negative inside the water.
-export function makeWaterField(s, iso = 0.5) {
+export function makeWaterField(s, iso = WATER_EDGE) {
   return (x, y) => iso - thickness(x, y, s);
 }

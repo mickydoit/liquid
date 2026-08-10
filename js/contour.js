@@ -170,7 +170,7 @@ export function makeProjector(bounds, width, height, margin = 0.06) {
 // Outline of a scalar field (negative inside), in pixel space.
 export function fieldOutline(field, { bounds = { x0: -1.35, y0: -1.35, x1: 1.35, y1: 1.35 },
                                       width = 1600, height = 1200,
-                                      res = 520, simplify = 0.8, margin = 0.02 } = {}) {
+                                      res = 760, simplify = 0.6, margin = 0.02 } = {}) {
   const { project, scale } = makeProjector(bounds, width, height, margin);
   const loops = marchingSquares(field, bounds, res);
   return {

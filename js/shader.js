@@ -76,7 +76,10 @@ void main() {
   if (uFlat > 0.5) {
     // Exactly the silhouette the vector export emits, so what is on screen
     // and what lands in the SVG are the same shape.
-    float m = smoothstep(0.45, 0.55, T);
+    // ⚠ Centred on WATER_EDGE (0.08) in js/cymafield.js — the same value the
+    // coverage ramp below uses and the exporter contours. All three must
+    // agree or the export is a different weight from the screen.
+    float m = smoothstep(0.05, 0.11, T);
     gl_FragColor = mix(vec4(mix(uGround, uInk, m), 1.0), vec4(uInk, m), uTransparent);
     return;
   }
@@ -136,7 +139,7 @@ void main() {
            + vec3(1.0) * fres * 0.16 * uGloss
            + (iri - 0.5) * curv * fres * uDispersion * 0.34;
 
-  float cov = smoothstep(0.02, 0.14, T);
+  float cov = smoothstep(0.02, 0.14, T);   // ramp centred on WATER_EDGE
   col = mix(backPlain, col, cov);
   gl_FragColor = mix(vec4(col, 1.0), vec4(col, cov), uTransparent);
 }`;
