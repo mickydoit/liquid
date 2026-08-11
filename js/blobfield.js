@@ -52,3 +52,39 @@ export function unionRound(d1, d2, kf) {
   const ux = Math.max(kf - d1, 0), uy = Math.max(kf - d2, 0);
   return Math.max(kf, Math.min(d1, d2)) - Math.hypot(ux, uy);
 }
+
+// Mulberry32. Small, fast, and good enough for layout jitter. Seeded from the
+// audio fingerprint via fnv1a, so a design is reproducible from its sound.
+export function makeRng(seed) {
+  let a = seed >>> 0;
+  return function next() {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Frozen warp parameters: three sinusoid phases and three frequencies. Drawn
+// once per design so the warp field itself is stable while `amount` varies.
+export function warpParams(rng) {
+  return [
+    0.7 + rng() * 1.6, 0.7 + rng() * 1.6,   // frequencies
+    rng() * Math.PI * 2, rng() * Math.PI * 2, // phases
+    0.6 + rng() * 1.1, rng() * Math.PI * 2,   // cross term
+  ];
+}
+
+// Smooth, bounded, continuous domain warp. The displacement vector is
+// normalised so |offset| <= amount exactly — an unbounded warp shreds forms
+// instead of bending them.
+export function warp(px, py, amount, p) {
+  if (amount <= 0) return [px, py];
+  const [f1, f2, a1, a2, f3, a3] = p;
+  let dx = Math.sin(py * f1 + a1) + 0.5 * Math.sin(px * f3 + a3);
+  let dy = Math.sin(px * f2 + a2) + 0.5 * Math.cos(py * f3 + a3);
+  const len = Math.hypot(dx, dy);
+  if (len > 1) { dx /= len; dy /= len; }
+  return [px + dx * amount, py + dy * amount];
+}

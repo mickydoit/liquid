@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sdTaperedCapsule, unionRound } from '../js/blobfield.js';
+import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams } from '../js/blobfield.js';
+import { fnv1a } from '../js/hash.js';
 
 test('tapered capsule: distance is zero on each end cap', () => {
   // A capsule from (-1,0) r=0.3 to (1,0) r=0.1. The far side of each end cap
@@ -50,4 +51,42 @@ test('fillet union is inert far from the join', () => {
 test('fillet union with kf = 0 is exactly min()', () => {
   assert.equal(unionRound(0.3, 0.7, 0), 0.3);
   assert.equal(unionRound(0, 0, 0), 0);
+});
+
+test('rng is deterministic and stays in range', () => {
+  const a = makeRng(fnv1a('abc')), b = makeRng(fnv1a('abc'));
+  const seqA = Array.from({ length: 200 }, () => a());
+  const seqB = Array.from({ length: 200 }, () => b());
+  assert.deepEqual(seqA, seqB, 'same seed must give the same sequence');
+  for (const v of seqA) assert.ok(v >= 0 && v < 1, `out of range: ${v}`);
+});
+
+test('rng differs between seeds', () => {
+  const a = makeRng(fnv1a('abc')), b = makeRng(fnv1a('abd'));
+  assert.notEqual(a(), b());
+});
+
+test('warp with amount 0 is the identity', () => {
+  const p = warpParams(makeRng(7));
+  assert.deepEqual(warp(0.4, -0.2, 0, p), [0.4, -0.2]);
+});
+
+test('warp displacement is bounded by amount', () => {
+  // Unbounded warp turns forms into spaghetti. The displacement must scale
+  // with `amount` and never exceed it.
+  const p = warpParams(makeRng(7));
+  for (let i = 0; i < 400; i++) {
+    const x = -2 + (4 * i) / 399, y = Math.sin(i) * 1.5;
+    const [wx, wy] = warp(x, y, 0.25, p);
+    assert.ok(Math.hypot(wx - x, wy - y) <= 0.25 + 1e-12,
+      `displacement ${Math.hypot(wx - x, wy - y)} exceeded 0.25`);
+  }
+});
+
+test('warp is continuous', () => {
+  // A discontinuity would tear a form in half. Nearby inputs, nearby outputs.
+  const p = warpParams(makeRng(7));
+  const [ax, ay] = warp(0.5, 0.5, 0.3, p);
+  const [bx, by] = warp(0.5001, 0.5, 0.3, p);
+  assert.ok(Math.hypot(bx - ax, by - ay) < 1e-3);
 });
