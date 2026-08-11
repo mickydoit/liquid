@@ -179,8 +179,9 @@ const WEIGHT_EPS = 1e-3;
 export function blobField(px, py, prims, warpP, c) {
   const [wx, wy] = warp(px, py, c.warp * 0.35, warpP);
 
-  // Merge maps to the fillet radius. Scaled by hub radius so the waist keeps
-  // its proportion as the organism scales.
+  // Merge maps to a fixed fillet radius in world units, scaled only by the
+  // merge control itself — not by hubR, which is layout()-local and never
+  // reaches this function.
   const kf = c.merge * 0.22;
 
   let d = Infinity;
@@ -204,7 +205,12 @@ export function makeBlobField(seed, controls) {
   const { prims, warpP } = layout(seed, c);
   // Scale/Crop enlarges the organism relative to the frame, which is what
   // pushes arms off the edge and takes the centre out of view.
-  const s = c.scaleCrop;
+  // Floored, not clamped to a "sensible" range: at 0 this divides by zero
+  // (NaN/Infinity through warp and sdTaperedCapsule), and negative values
+  // flip the sign of every distance, silently breaking the negative-inside
+  // convention. 0.05 is far below any usable value, so it cannot alter a
+  // legitimate input.
+  const s = Math.max(0.05, c.scaleCrop);
   return {
     prims, warpP, controls: c,
     field: (x, y) => blobField(x / s, y / s, prims, warpP, c) * s,
