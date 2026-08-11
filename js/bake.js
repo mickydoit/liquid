@@ -185,3 +185,61 @@ export function cullHoles(mask, w, h, minArea) {
   }
   return out;
 }
+
+// Frame ratios (width / height). The frame is x in [-a, a], y in [-1, 1].
+export const FORMATS = { portrait: 2 / 3, square: 1, landscape: 3 / 2 };
+
+// Rasterise, clean, and recover a signed field.
+//
+// `simplify` in [0,1] scales all four cleanup radii together, so one control
+// takes the result from "every detail kept" to "macro-forms only".
+export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 0.5 } = {}) {
+  const h = res, w = Math.round(res * aspect);
+  const total = w * h;
+
+  // World units per cell. y spans [-1, 1] over h cells.
+  const scale = 2 / h;
+  const toWorld = (i, j) => [(-1 + (2 * (i + 0.5)) / w) * aspect, 1 - (2 * (j + 0.5)) / h];
+
+  let mask = new Uint8Array(total);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const [x, y] = toWorld(i, j);
+      mask[j * w + i] = field(x, y) < 0 ? 1 : 0;
+    }
+  }
+
+  // Radii in CELLS, derived from `simplify` and scaled by resolution so the
+  // result is resolution-independent.
+  const closeR = (0.004 + simplify * 0.020) * h;
+  const openR = (0.003 + simplify * 0.016) * h;
+  const minArea = (0.0004 + simplify * 0.008) * total;
+  const minHole = (0.0004 + simplify * 0.010) * total;
+
+  mask = close(mask, w, h, closeR);          // bridge gaps
+  mask = cullHoles(mask, w, h, minHole);     // pinholes out
+  mask = open(mask, w, h, openR);            // hairline filaments out
+  mask = cullComponents(mask, w, h, minArea); // detached specks out
+  mask = cullHoles(mask, w, h, minHole);     // opening can open new pinholes
+
+  // Recover a clean signed field, converted from cells back to world units.
+  const cells = signedEdt(mask, w, h);
+  const grid = new Float64Array(total);
+  for (let i = 0; i < total; i++) grid[i] = cells[i] * scale;
+
+  const FAR = 10;
+  const sample = (x, y) => {
+    // World -> continuous grid coordinates.
+    const gi = ((x / aspect + 1) / 2) * w - 0.5;
+    const gj = ((1 - y) / 2) * h - 0.5;
+    if (gi < 0 || gj < 0 || gi > w - 1 || gj > h - 1) return FAR;
+    const i0 = Math.floor(gi), j0 = Math.floor(gj);
+    const i1 = Math.min(i0 + 1, w - 1), j1 = Math.min(j0 + 1, h - 1);
+    const fx = gi - i0, fy = gj - j0;
+    const a = grid[j0 * w + i0], b = grid[j0 * w + i1];
+    const c = grid[j1 * w + i0], d = grid[j1 * w + i1];
+    return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
+  };
+
+  return { grid, mask, w, h, aspect, sample };
+}

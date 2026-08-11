@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { edt, signedEdt, dilate, erode, close, open, labelComponents, cullComponents, cullHoles } from '../js/bake.js';
+import { edt, signedEdt, dilate, erode, close, open, labelComponents, cullComponents, cullHoles, bake, FORMATS } from '../js/bake.js';
+import { fieldOutline } from '../js/contour.js';
+import { makeBlobField, defaultControls } from '../js/blobfield.js';
 
 const mk = (w, h, fn) => {
   const m = new Uint8Array(w * h);
@@ -309,5 +311,47 @@ test('cullHoles wiring must use 4-connectivity, not 8', () => {
   const c = cullHoles(m, w, h, 5);
   for (const [i, j] of [[10, 10], [11, 10], [12, 10], [13, 11], [14, 11], [15, 11]]) {
     assert.equal(c[j * w + i], 1, `(${i},${j}) must be filled under 4-connectivity`);
+  }
+});
+
+const baked = (o = {}, seed = 42) => bake(
+  makeBlobField(seed, Object.assign(defaultControls(), o)).field,
+  { aspect: FORMATS.portrait, res: 256 },
+);
+
+test('bake produces a grid matching the requested aspect', () => {
+  const b = baked();
+  assert.equal(b.h, 256, 'long edge');
+  assert.equal(b.w, Math.round(256 * FORMATS.portrait));
+});
+
+test('bake sample is negative inside the form and positive far outside', () => {
+  const b = baked();
+  assert.ok(b.sample(0, 0) < 0, 'hub should be inside');
+  assert.ok(b.sample(50, 50) > 0, 'far outside the grid must read as outside');
+});
+
+test('bake removes specks and pinholes', () => {
+  const b = baked({ simplify: 0.7 });
+  const total = b.w * b.h;
+  const { sizes } = labelComponents(b.mask, b.w, b.h, 8);
+  const minArea = total * 0.002;
+  for (const s of sizes) assert.ok(s >= minArea, `speck of ${s} cells survived`);
+});
+
+test('bake is deterministic', () => {
+  assert.deepEqual([...baked().grid], [...baked().grid]);
+});
+
+test('bake output feeds fieldOutline without producing garbage rings', () => {
+  const b = baked();
+  const { rings } = fieldOutline((x, y) => b.sample(x, y), {
+    bounds: { x0: -FORMATS.portrait, y0: -1, x1: FORMATS.portrait, y1: 1 },
+    width: 600, height: 900, res: 220,
+  });
+  assert.ok(rings.length >= 1, 'expected at least one ring');
+  assert.ok(rings.length <= 12, `expected few rings, got ${rings.length}`);
+  for (const r of rings) {
+    for (const [x, y] of r) assert.ok(Number.isFinite(x) && Number.isFinite(y));
   }
 });
