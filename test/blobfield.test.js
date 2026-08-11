@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS, blobField, makeBlobField, perturbState, PERTURB_MAX } from '../js/blobfield.js';
+import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS, blobField, makeBlobField, perturbState, PERTURB_MAX, audioTargets, resolveControls, seedFor } from '../js/blobfield.js';
 import { fnv1a } from '../js/hash.js';
 
 // Shared by layout tests below, and reused by later tasks.
@@ -267,4 +267,57 @@ test('perturbed field stays finite', () => {
       assert.ok(Number.isFinite(field(-2 + (4 * i) / 39, -2 + (4 * j) / 39)));
     }
   }
+});
+
+const feat = (o = {}) => Object.assign(
+  { pitchNorm: 0.4, rms: 0.3, centroid: 0.3, spread: 0.3, pitchConf: 0.5 }, o);
+
+test('audioTargets returns every control key in range', () => {
+  const t = audioTargets(feat());
+  for (const k of Object.keys(defaultControls())) {
+    if (k === 'invert') continue;
+    assert.ok(k in t, `missing ${k}`);
+    assert.ok(t[k] >= 0 && t[k] <= 1, `${k} out of range: ${t[k]}`);
+  }
+});
+
+test('audioTargets handles missing features without producing NaN', () => {
+  const t = audioTargets({});
+  for (const [k, v] of Object.entries(t)) assert.ok(Number.isFinite(v), `${k} is ${v}`);
+});
+
+test('pitch drives form count', () => {
+  assert.ok(audioTargets(feat({ pitchNorm: 0.9 })).formCount >
+            audioTargets(feat({ pitchNorm: 0.1 })).formCount);
+});
+
+test('spectral spread drives warp and asymmetry', () => {
+  const lo = audioTargets(feat({ spread: 0.1 })), hi = audioTargets(feat({ spread: 0.9 }));
+  assert.ok(hi.warp > lo.warp);
+  assert.ok(hi.symmetry < lo.symmetry, 'noisier input should be less symmetrical');
+});
+
+test('the slider sets the centre and sound deviates around it', () => {
+  // Two different sounds must give different results at the SAME slider
+  // position — otherwise the slider has discarded the fingerprint.
+  const a = resolveControls({ formCount: 0.5 }, feat({ pitchNorm: 0.1 }));
+  const b = resolveControls({ formCount: 0.5 }, feat({ pitchNorm: 0.9 }));
+  assert.notEqual(a.formCount, b.formCount);
+  // And the slider must still dominate: both sit near 0.5, not at the extremes.
+  assert.ok(Math.abs(a.formCount - 0.5) < 0.3);
+  assert.ok(Math.abs(b.formCount - 0.5) < 0.3);
+});
+
+test('resolveControls clamps to [0,1]', () => {
+  const r = resolveControls({ warp: 1, formCount: 0 }, feat({ spread: 1, pitchNorm: 0 }));
+  for (const [k, v] of Object.entries(r)) {
+    if (k === 'invert' || k === 'scaleCrop') continue;
+    assert.ok(v >= 0 && v <= 1, `${k} = ${v}`);
+  }
+});
+
+test('seedFor is stable for the same sound and steps with variation', () => {
+  assert.equal(seedFor(feat(), 0), seedFor(feat(), 0));
+  assert.notEqual(seedFor(feat(), 0), seedFor(feat(), 1));
+  assert.notEqual(seedFor(feat(), 0), seedFor(feat({ pitchNorm: 0.8 }), 0));
 });

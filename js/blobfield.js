@@ -13,6 +13,7 @@
 // Signed distance, NEGATIVE INSIDE, matching contour.js's convention.
 
 import { psi, idleState } from './cymafield.js';
+import { fnv1a } from './hash.js';
 
 // Distance to the convex hull of circles (a, ra) and (b, rb).
 // Inigo Quilez's 2D rounded cone, with the two degenerate cases guarded.
@@ -261,4 +262,65 @@ export function makeBlobField(seed, controls) {
     prims, warpP, controls: c,
     field: (x, y) => blobField(x / s, y / s, prims, warpP, c) * s,
   };
+}
+
+const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
+
+// How far the sound may move each control away from its slider position.
+// Zero for the three that are pure art direction.
+const DEPTH = {
+  detail: 0.5, formCount: 0.5, merge: 0.4, simplify: 0,
+  symmetry: 0.5, stretch: 0.4, warp: 0.5, scaleCrop: 0.3,
+  edgeSoftness: 0, invert: 0,
+};
+
+// Sound -> control targets, each in [0,1]. Feature names match cymafield.js.
+export function audioTargets(f) {
+  const pitch = clamp01(f.pitchNorm ?? 0.4);
+  const rms = clamp01(f.rms ?? 0);
+  const centroid = clamp01(f.centroid ?? 0.3);
+  const spread = clamp01(f.spread ?? 0.3);
+  const conf = clamp01(f.pitchConf ?? 0.5);
+
+  return {
+    detail: centroid,
+    formCount: pitch,
+    merge: clamp01(Math.min(1, rms * 3.2)),
+    simplify: 0.5,
+    // Noisy, atonal input reads as less ordered.
+    symmetry: clamp01(1 - spread),
+    stretch: conf,
+    warp: spread,
+    scaleCrop: clamp01(Math.min(1, rms * 3.2)),
+    edgeSoftness: 0.5,
+    invert: 0,
+  };
+}
+
+// The slider sets the centre; the sound deviates around it by DEPTH.
+export function resolveControls(sliders, features) {
+  const s = Object.assign(defaultControls(), sliders);
+  const a = audioTargets(features ?? {});
+  const out = {};
+  for (const k of Object.keys(defaultControls())) {
+    if (k === 'invert') { out[k] = s[k]; continue; }
+    if (k === 'scaleCrop') {
+      // scaleCrop is not a 0-1 control; it is a multiplier around 1.
+      out[k] = Math.max(0.5, s[k] + (a[k] - 0.5) * DEPTH[k]);
+      continue;
+    }
+    out[k] = clamp01(s[k] + (a[k] - 0.5) * DEPTH[k]);
+  }
+  return out;
+}
+
+// Layout seed: the sound's fingerprint XOR the Variation step. Determinism
+// holds — same sound, same settings, same variation, same composition — while
+// Variation still offers alternative takes on a recording worth keeping.
+export function seedFor(features, variation = 0) {
+  const f = features ?? {};
+  const key = [f.pitchNorm, f.rms, f.centroid, f.spread, f.pitchConf]
+    .map((v) => (typeof v === 'number' ? v.toFixed(3) : '-'))
+    .join(',');
+  return (fnv1a(key) ^ Math.imul(variation >>> 0, 0x9e3779b1)) >>> 0;
 }
