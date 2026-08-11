@@ -7,8 +7,13 @@
 // being evaluated per pixel per frame like cymafield.js.
 //
 // Everything here is expressed in terms of an exact Euclidean distance
-// transform: dilation by r is {d <= r}, erosion by r is {d <= -r}. That avoids
-// the blocky artefacts of iterative square-kernel dilate/erode.
+// transform: dilation by r is {d <= r}, erosion by r is {d < -r} — strict,
+// not <=. There is no zero level set: edt measures cell-centre to
+// cell-centre, so the nearest inside cell to any boundary is at magnitude 1,
+// never 0. {d <= -r} would therefore retain every inside cell at r = 1 (an
+// identity, not an erosion), while duality with dilate (which grows the
+// outside starting from magnitude 1 too) demands the strict form. That
+// avoids the blocky artefacts of iterative square-kernel dilate/erode.
 
 const INF = 1e20;
 
