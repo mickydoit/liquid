@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS, blobField, makeBlobField } from '../js/blobfield.js';
+import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS, blobField, makeBlobField, perturbState, PERTURB_MAX } from '../js/blobfield.js';
 import { fnv1a } from '../js/hash.js';
 
 // Shared by layout tests below, and reused by later tasks.
@@ -215,5 +215,56 @@ test('field is deterministic', () => {
   for (let i = 0; i < 50; i++) {
     const x = -1.5 + (3 * i) / 49;
     assert.equal(a.field(x, 0.3), b.field(x, 0.3));
+  }
+});
+
+test('detail 0 leaves the field completely unperturbed', () => {
+  // Shape Style at the simplified end must be pure arcs and lines: the
+  // reference silhouettes have no nodal waviness at all.
+  const plain = makeBlobField(42, ctl({ detail: 0 }));
+  const same = makeBlobField(42, ctl({ detail: 0 }));
+  for (let i = 0; i < 40; i++) {
+    const x = -1.2 + (2.4 * i) / 39;
+    assert.equal(plain.field(x, 0.25), same.field(x, 0.25));
+  }
+});
+
+test('detail > 0 actually changes the field', () => {
+  const plain = makeBlobField(42, ctl({ detail: 0 }));
+  const wavy = makeBlobField(42, ctl({ detail: 0.6 }));
+  let changed = 0;
+  for (let i = 0; i < 60; i++) {
+    const x = -1.2 + (2.4 * i) / 59;
+    if (Math.abs(plain.field(x, 0.25) - wavy.field(x, 0.25)) > 1e-9) changed++;
+  }
+  assert.ok(changed > 30, `only ${changed}/60 samples moved`);
+});
+
+test('perturbation is bounded below the form scale', () => {
+  // THE anti-breakup guarantee. If the displacement can exceed the smallest
+  // form radius, forms fragment into cells and the whole style fails.
+  const plain = makeBlobField(42, ctl({ detail: 0 }));
+  const wavy = makeBlobField(42, ctl({ detail: 1 }));
+  const s = ctl().scaleCrop;
+  for (let j = 0; j < 50; j++) {
+    for (let i = 0; i < 50; i++) {
+      const x = -1.5 + (3 * i) / 49, y = -1.5 + (3 * j) / 49;
+      const delta = Math.abs(plain.field(x, y) - wavy.field(x, y));
+      assert.ok(delta <= PERTURB_MAX * s + 1e-9,
+        `displacement ${delta} exceeded ${PERTURB_MAX * s}`);
+    }
+  }
+});
+
+test('perturbState raises mode order with detail', () => {
+  assert.ok(perturbState(0.9).m > perturbState(0.1).m);
+});
+
+test('perturbed field stays finite', () => {
+  const { field } = makeBlobField(42, ctl({ detail: 1, warp: 0.5 }));
+  for (let j = 0; j < 40; j++) {
+    for (let i = 0; i < 40; i++) {
+      assert.ok(Number.isFinite(field(-2 + (4 * i) / 39, -2 + (4 * j) / 39)));
+    }
   }
 });

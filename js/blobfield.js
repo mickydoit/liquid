@@ -12,6 +12,8 @@
 //
 // Signed distance, NEGATIVE INSIDE, matching contour.js's convention.
 
+import { psi, idleState } from './cymafield.js';
+
 // Distance to the convex hull of circles (a, ra) and (b, rb).
 // Inigo Quilez's 2D rounded cone, with the two degenerate cases guarded.
 export function sdTaperedCapsule(px, py, ax, ay, ra, bx, by, rb) {
@@ -173,6 +175,29 @@ export function layout(seed, controls) {
 // would leave a hairline scratch exactly where the arm faded out.
 const WEIGHT_EPS = 1e-3;
 
+// Maximum contour displacement from the psi perturbation, in world units.
+//
+// The smallest form radius layout() produces is 0.10. Keeping the displacement
+// well under that is what makes cellular breakup impossible by construction --
+// it is the reason Shape Style is a bounded perturbation of a distance field
+// rather than a crossfade between two fields. Raising this re-opens the
+// breakup failure; re-run the acceptance component-count tests if you do.
+export const PERTURB_MAX = 0.045;
+
+// A cymatic state for psi(). Detail raises the mode order, so higher Detail
+// gives finer waviness along the contour rather than a bigger wobble.
+export function perturbState(detail) {
+  return Object.assign(idleState(), {
+    m: 2 + detail * 7.5,
+    n: 1.5 + detail * 5.0,
+    kr: 4.5 + detail * 16,
+    ma: 2 + detail * 6,
+    mix: 0.5,
+    amp: 1,
+    grow: 1,
+  });
+}
+
 // `controls` must be a COMPLETE control object — run it through
 // defaultControls() once in the caller. This is evaluated per cell during the
 // bake (~500k times), so allocating a merged object here would dominate.
@@ -197,11 +222,22 @@ export function blobField(px, py, prims, warpP, c) {
   // therefore the exported path. It is not an opacity ramp.
   d -= c.edgeSoftness * 0.05;
 
+  // Shape Style: psi displaces the contour by a BOUNDED distance. psi is a
+  // superposition of cosines ranging to about +-2, so it is clamped before
+  // scaling or it would overshoot PERTURB_MAX.
+  if (c.detail > 0) {
+    const w = Math.max(-1, Math.min(1, psi(wx, wy, c._psiState)));
+    d -= w * c.detail * PERTURB_MAX;
+  }
+
   return c.invert ? -d : d;
 }
 
 export function makeBlobField(seed, controls) {
   const c = Object.assign(defaultControls(), controls);
+  // Built once: psi's state is constant across the field, and rebuilding it
+  // per cell would allocate an object ~500k times during a bake.
+  c._psiState = perturbState(c.detail);
   const { prims, warpP } = layout(seed, c);
   // Scale/Crop enlarges the organism relative to the frame, which is what
   // pushes arms off the edge and takes the centre out of view.
