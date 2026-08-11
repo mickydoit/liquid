@@ -1504,14 +1504,60 @@ test('bake produces a grid matching the requested aspect', () => {
   assert.equal(b.w, Math.round(256 * FORMATS.portrait));
 });
 
+test('res is the long edge in every format', () => {
+  // Otherwise a landscape export silently costs 2.25x a portrait one.
+  const f = (x, y) => Math.hypot(x, y) - 0.5;
+  for (const [name, aspect] of Object.entries(FORMATS)) {
+    const b = bake(f, { aspect, res: 200 });
+    assert.equal(Math.max(b.w, b.h), 200, `${name}: long edge should be 200`);
+    assert.ok(Math.abs(b.w / b.h - aspect) < 0.01, `${name}: aspect ${b.w / b.h}`);
+  }
+});
+
+test('sample reproduces an asymmetric analytic field', () => {
+  // The guard against coordinate-mapping errors. A y-flip, an x-mirror, an
+  // inverted aspect or a wrong `scale` all leave a radially symmetric field
+  // looking correct — only an OFF-CENTRE probe can tell them apart.
+  const f = (x, y) => Math.hypot(x, y - 0.5) - 0.2;
+  const b = bake(f, { aspect: FORMATS.portrait, res: 400, simplify: 0 });
+  const cell = 2 / b.h;
+  for (const [x, y] of [[0, 0.5], [0, 0.7], [0, 0.3], [0.2, 0.5], [-0.2, 0.5], [0, -0.5]]) {
+    assert.ok(Math.abs(b.sample(x, y) - f(x, y)) < 4 * cell,
+      `at (${x},${y}): got ${b.sample(x, y)}, want ${f(x, y)}`);
+  }
+  // The blob sits ABOVE centre. Mirroring y would move it below.
+  assert.ok(b.sample(0, 0.5) < 0, 'inside the blob');
+  assert.ok(b.sample(0, -0.5) > 0, 'the mirrored position must be outside');
+});
+
+test('cleanup actually removes specks and pinholes', () => {
+  // A field built to HAVE both, so the cleanup stages are exercised. The
+  // seed-derived fields happen to be a single clean component, which is why
+  // this uses an analytic field instead.
+  const body = (x, y) => Math.hypot(x, y) - 0.55;
+  const speck = (x, y) => Math.hypot(x - 0.5, y - 0.8) - 0.012;
+  const pinhole = (x, y) => 0.02 - Math.hypot(x - 0.1, y - 0.1);
+  const f = (x, y) => Math.min(Math.max(body(x, y), pinhole(x, y)), speck(x, y));
+
+  const dirty = bake(f, { aspect: FORMATS.square, res: 300, simplify: 0 });
+  const clean = bake(f, { aspect: FORMATS.square, res: 300, simplify: 1 });
+
+  assert.ok(labelComponents(dirty.mask, dirty.w, dirty.h, 8).sizes.length >= 2,
+    'the fixture should start with a speck');
+  assert.equal(labelComponents(clean.mask, clean.w, clean.h, 8).sizes.length, 1,
+    'cleanup should leave one component');
+  assert.ok(clean.sample(0.1, 0.1) < 0, 'the pinhole should be filled');
+  assert.notDeepEqual([...dirty.mask], [...clean.mask], 'simplify must do something');
+});
+
 test('bake sample is negative inside the form and positive far outside', () => {
   const b = baked();
   assert.ok(b.sample(0, 0) < 0, 'hub should be inside');
   assert.ok(b.sample(50, 50) > 0, 'far outside the grid must read as outside');
 });
 
-test('bake removes specks and pinholes', () => {
-  const b = baked({ simplify: 0.7 });
+test('a baked blob field carries no specks', () => {
+  const b = baked();
   const total = b.w * b.h;
   const { sizes } = labelComponents(b.mask, b.w, b.h, 8);
   const minArea = total * 0.002;
@@ -1560,7 +1606,11 @@ export const FORMATS = { portrait: 2 / 3, square: 1, landscape: 3 / 2 };
 // `simplify` in [0,1] scales all four cleanup radii together, so one control
 // takes the result from "every detail kept" to "macro-forms only".
 export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 0.5 } = {}) {
-  const h = res, w = Math.round(res * aspect);
+  // `res` is the LONG edge, so a landscape bake costs the same as a portrait
+  // one. Deriving `h = res` unconditionally would make landscape 2.25x the
+  // work of portrait at the same nominal resolution, for no stated reason.
+  const w = aspect >= 1 ? res : Math.round(res * aspect);
+  const h = aspect >= 1 ? Math.round(res / aspect) : res;
   const total = w * h;
 
   // World units per cell. y spans [-1, 1] over h cells.
