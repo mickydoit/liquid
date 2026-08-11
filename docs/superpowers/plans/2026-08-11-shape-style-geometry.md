@@ -79,7 +79,6 @@ test('fillet union adds material at the crossing point', () => {
   // min() leaves that point exactly on the surface, with a sharp notch. The
   // fillet must pull it INSIDE, by kf*(1 - sqrt(2)).
   const kf = 0.5;
-  assert.equal(Math.min(0, 0), 0);
   const d = unionRound(0, 0, kf);
   assert.ok(Math.abs(d - kf * (1 - Math.SQRT2)) < 1e-12, `got ${d}`);
   assert.ok(d < 0, 'fillet must add material, not leave a notch');
@@ -1810,7 +1809,10 @@ for (const name of Object.keys(SCENARIOS)) {
       const total = b.w * b.h;
       const { sizes } = labelComponents(b.mask, b.w, b.h, 8);
 
-      assert.ok(sizes.length >= 1 && sizes.length <= 7,
+      // 3-7 is the spec's acceptance criterion, not a crash guard. If this
+      // fails, the scenario values need tuning — which is the work of this
+      // task. Do NOT loosen the bound to make it pass.
+      assert.ok(sizes.length >= 3 && sizes.length <= 7,
         `${name}/${seed}: ${sizes.length} components`);
       for (const s of sizes) {
         assert.ok(s / total >= 0.002, `${name}/${seed}: speck at ${s / total}`);
