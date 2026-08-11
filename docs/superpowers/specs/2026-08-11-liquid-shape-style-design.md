@@ -65,12 +65,14 @@ Variation value (`js/hash.js` already provides the hashing).
 **Union.** Circular fillet union, not `smin`:
 
 ```
-d = min(d1, d2)
-if (d1 < kf && d2 < kf) d = min(d, -(kf - length(vec2(kf - d1, kf - d2))))
+d = max(kf, min(d1, d2)) − length(max(vec2(kf − d1, kf − d2), 0))
 ```
 
-This produces the tangent-arc concave waist the references have. The fillet
-radius `kf` is the **Merge** control.
+At the crossing point of two lobes (`d1 = d2 = 0`) this gives `−0.414·kf` —
+material added, on an arc tangent to both surfaces. That is the concave waist
+the references have. The fillet radius `kf` is the **Merge** control.
+
+Note this is *not* the polynomial `opSmoothUnion`, which bulges convexly.
 
 **Shape Style perturbation.** The capsule union is a true signed *distance*
 field, so ψ can displace its contour by a bounded number of pixels:
