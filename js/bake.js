@@ -111,3 +111,77 @@ export function open(mask, w, h, r) {
   if (r <= 0) return Uint8Array.from(mask);
   return dilate(erode(mask, w, h, r), w, h, r);
 }
+
+// Connected components by iterative flood fill. Iterative rather than
+// recursive: a full-frame component would blow the call stack.
+//
+// Foreground uses 8-connectivity and background 4-connectivity. Using the same
+// for both produces the classic paradox where a diagonal line simultaneously
+// does and does not separate the regions either side of it.
+export function labelComponents(mask, w, h, connectivity = 8) {
+  const labels = new Int32Array(w * h);
+  const sizes = [];
+  const stack = [];
+  const d8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+  const nbrs = connectivity === 4 ? d8.slice(0, 4) : d8;
+
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || labels[start]) continue;
+    const id = sizes.length + 1;
+    let n = 0;
+    stack.push(start);
+    labels[start] = id;
+    while (stack.length) {
+      const cur = stack.pop();
+      n++;
+      const cx = cur % w, cy = (cur - cx) / w;
+      for (const [dx, dy] of nbrs) {
+        const nx = cx + dx, ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+        const ni = ny * w + nx;
+        if (mask[ni] && !labels[ni]) { labels[ni] = id; stack.push(ni); }
+      }
+    }
+    sizes.push(n);
+  }
+  return { labels, sizes };
+}
+
+// Drop foreground components below minArea cells — the detached specks.
+export function cullComponents(mask, w, h, minArea) {
+  if (minArea <= 1) return Uint8Array.from(mask);
+  const { labels, sizes } = labelComponents(mask, w, h, 8);
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i++) {
+    out[i] = labels[i] && sizes[labels[i] - 1] >= minArea ? 1 : 0;
+  }
+  return out;
+}
+
+// Fill background components below minArea that do NOT touch the border. A
+// background region reaching the border is the exterior, not a hole.
+export function cullHoles(mask, w, h, minArea) {
+  if (minArea <= 1) return Uint8Array.from(mask);
+  const inv = new Uint8Array(mask.length);
+  for (let i = 0; i < mask.length; i++) inv[i] = mask[i] ? 0 : 1;
+  const { labels, sizes } = labelComponents(inv, w, h, 4);
+
+  const touchesBorder = new Uint8Array(sizes.length + 1);
+  for (let x = 0; x < w; x++) {
+    if (labels[x]) touchesBorder[labels[x]] = 1;
+    const b = (h - 1) * w + x;
+    if (labels[b]) touchesBorder[labels[b]] = 1;
+  }
+  for (let y = 0; y < h; y++) {
+    if (labels[y * w]) touchesBorder[labels[y * w]] = 1;
+    const r = y * w + w - 1;
+    if (labels[r]) touchesBorder[labels[r]] = 1;
+  }
+
+  const out = Uint8Array.from(mask);
+  for (let i = 0; i < mask.length; i++) {
+    const id = labels[i];
+    if (id && !touchesBorder[id] && sizes[id - 1] < minArea) out[i] = 1;
+  }
+  return out;
+}

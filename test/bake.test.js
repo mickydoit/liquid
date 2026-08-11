@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { edt, signedEdt, dilate, erode, close, open } from '../js/bake.js';
+import { edt, signedEdt, dilate, erode, close, open, labelComponents, cullComponents, cullHoles } from '../js/bake.js';
 
 const mk = (w, h, fn) => {
   const m = new Uint8Array(w * h);
@@ -218,4 +218,49 @@ test('erode and dilate are dual', () => {
   const inv = Uint8Array.from(m, (v) => (v ? 0 : 1));
   const viaDual = Uint8Array.from(dilate(inv, w, h, 3), (v) => (v ? 0 : 1));
   assert.deepEqual([...erode(m, w, h, 3)], [...viaDual]);
+});
+
+test('labelComponents finds separate blobs', () => {
+  const w = 20, h = 10;
+  const m = mk(w, h, (i, j) => (i >= 2 && i <= 4 && j >= 2 && j <= 4) ||
+                               (i >= 12 && i <= 15 && j >= 5 && j <= 7));
+  const { sizes } = labelComponents(m, w, h, 8);
+  assert.equal(sizes.length, 2);
+  assert.deepEqual(sizes.slice().sort((a, b) => a - b), [9, 12]);
+});
+
+test('labelComponents joins diagonal neighbours at connectivity 8', () => {
+  const w = 5, h = 5;
+  const m = mk(w, h, (i, j) => (i === 1 && j === 1) || (i === 2 && j === 2));
+  assert.equal(labelComponents(m, w, h, 8).sizes.length, 1);
+  assert.equal(labelComponents(m, w, h, 4).sizes.length, 2);
+});
+
+test('cullComponents removes specks and keeps macro-forms', () => {
+  const w = 30, h = 30;
+  const m = mk(w, h, (i, j) => (i >= 5 && i <= 20 && j >= 5 && j <= 20) ||
+                               (i === 27 && j === 27));
+  const c = cullComponents(m, w, h, 10);
+  assert.equal(c[27 * w + 27], 0, 'speck must go');
+  assert.equal(c[10 * w + 10], 1, 'macro-form must stay');
+});
+
+test('cullHoles fills small holes but keeps large ones', () => {
+  const w = 40, h = 40;
+  const m = mk(w, h, (i, j) => {
+    if (i < 3 || i > 36 || j < 3 || j > 36) return false;
+    if (i === 8 && j === 8) return false;                       // 1-cell pinhole
+    if (i >= 20 && i <= 30 && j >= 20 && j <= 30) return false; // big cavity
+    return true;
+  });
+  const c = cullHoles(m, w, h, 20);
+  assert.equal(c[8 * w + 8], 1, 'pinhole must be filled');
+  assert.equal(c[25 * w + 25], 0, 'large cavity must survive');
+});
+
+test('cullHoles does not fill the exterior', () => {
+  const w = 20, h = 20;
+  const m = mk(w, h, (i, j) => i >= 5 && i <= 14 && j >= 5 && j <= 14);
+  const c = cullHoles(m, w, h, 10000);
+  assert.equal(c[0], 0, 'background touching the border is not a hole');
 });
