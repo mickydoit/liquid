@@ -313,7 +313,9 @@ git commit -m "feat: seeded rng and bounded domain warp"
 - Consumes: `makeRng`, `warpParams` (Task 2)
 - Produces:
   - `MAX_FORMS = 7` (constant)
-  - `defaultControls() → object` with keys `detail, formCount, merge, simplify, symmetry, stretch, warp, scaleCrop, edgeSoftness, invert` — all numbers in [0,1] except `invert` (0 or 1)
+  - `defaultControls() → object` with keys `detail, formCount, merge, simplify, symmetry, stretch, warp, scaleCrop, edgeSoftness, invert` — all numbers in [0,1] except:
+    - `invert` — 0 or 1
+    - `scaleCrop` — a frame-scale **multiplier**, roughly [0.5, 2.0]. 1.0 means the organism exactly fits the frame; above 1 it overflows and gets cropped. It is not a normalised control, and `resolveControls` (Task 10) deliberately treats it differently from the rest.
   - `layout(seed, controls) → { prims, warpP }` where `prims` is an array of
     `{ ax, ay, ra, bx, by, rb, weight }`, always length `MAX_FORMS + 1`
     (index 0 is the central hub), and `weight ∈ [0,1]`
