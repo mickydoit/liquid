@@ -1531,22 +1531,35 @@ test('sample reproduces an asymmetric analytic field', () => {
 });
 
 test('cleanup actually removes specks and pinholes', () => {
-  // A field built to HAVE both, so the cleanup stages are exercised. The
-  // seed-derived fields happen to be a single clean component, which is why
+  // A field built to HAVE both, so the cleanup stages are genuinely exercised.
+  // The seed-derived fields happen to be a single clean component, which is why
   // this uses an analytic field instead.
+  //
+  // The radii are not arbitrary. At res 300 square, a cell is 2/300 world, and
+  // bake's own thresholds are minArea 36 -> 756 cells and minHole 36 -> 936 as
+  // simplify goes 0 -> 1, with openR 0.9 -> 5.7. So:
+  //   speck   r = 0.06  = 9.0 cells, area 254 — above minArea at simplify 0 so
+  //                       it EXISTS to be culled, below it at simplify 1 so it
+  //                       goes, and wider than openR so opening cannot erase it
+  //                       and steal the credit.
+  //   pinhole r = 0.053 = 7.9 cells, area 199 — likewise straddles minHole, and
+  //                       is wider than closeR so closing cannot fill it first.
+  // Verified: removing cullComponents leaves 2 components in `clean`; removing
+  // cullHoles leaves the pinhole open. Both make this test fail.
   const body = (x, y) => Math.hypot(x, y) - 0.55;
-  const speck = (x, y) => Math.hypot(x - 0.5, y - 0.8) - 0.012;
-  const pinhole = (x, y) => 0.02 - Math.hypot(x - 0.1, y - 0.1);
+  const speck = (x, y) => Math.hypot(x - 0.5, y - 0.8) - 0.06;
+  const pinhole = (x, y) => 0.053 - Math.hypot(x - 0.1, y - 0.1);
   const f = (x, y) => Math.min(Math.max(body(x, y), pinhole(x, y)), speck(x, y));
 
   const dirty = bake(f, { aspect: FORMATS.square, res: 300, simplify: 0 });
   const clean = bake(f, { aspect: FORMATS.square, res: 300, simplify: 1 });
 
-  assert.ok(labelComponents(dirty.mask, dirty.w, dirty.h, 8).sizes.length >= 2,
-    'the fixture should start with a speck');
+  assert.equal(labelComponents(dirty.mask, dirty.w, dirty.h, 8).sizes.length, 2,
+    'the fixture must start with a speck, or nothing is being culled');
+  assert.ok(dirty.sample(0.1, 0.1) > 0, 'the fixture must start with a pinhole');
   assert.equal(labelComponents(clean.mask, clean.w, clean.h, 8).sizes.length, 1,
-    'cleanup should leave one component');
-  assert.ok(clean.sample(0.1, 0.1) < 0, 'the pinhole should be filled');
+    'cullComponents should leave one component');
+  assert.ok(clean.sample(0.1, 0.1) < 0, 'cullHoles should fill the pinhole');
   assert.notDeepEqual([...dirty.mask], [...clean.mask], 'simplify must do something');
 });
 
