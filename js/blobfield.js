@@ -201,6 +201,12 @@ export function perturbState(detail) {
 // `controls` must be a COMPLETE control object — run it through
 // defaultControls() once in the caller. This is evaluated per cell during the
 // bake (~500k times), so allocating a merged object here would dominate.
+//
+// Second precondition: if c.detail > 0, c._psiState must already be populated
+// (a cymatic state built by perturbState()). makeBlobField is what establishes
+// both preconditions — it merges the controls AND builds _psiState once, up
+// front, rather than here, because this function runs once per grid cell
+// during the bake and cannot afford to allocate that state on every call.
 export function blobField(px, py, prims, warpP, c) {
   const [wx, wy] = warp(px, py, c.warp * 0.35, warpP);
 
@@ -225,7 +231,11 @@ export function blobField(px, py, prims, warpP, c) {
   // Shape Style: psi displaces the contour by a BOUNDED distance. psi is a
   // superposition of cosines ranging to about +-2, so it is clamped before
   // scaling or it would overshoot PERTURB_MAX.
-  if (c.detail > 0) {
+  //
+  // The `c._psiState` check is defensive, not decorative: a caller that
+  // bypassed makeBlobField (and so never got _psiState built) should get the
+  // un-perturbed field, not a TypeError from psi() reading an undefined state.
+  if (c.detail > 0 && c._psiState) {
     const w = Math.max(-1, Math.min(1, psi(wx, wy, c._psiState)));
     d -= w * c.detail * PERTURB_MAX;
   }
