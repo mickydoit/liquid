@@ -104,7 +104,11 @@ export function defaultControls() {
     symmetry: 0.25,   // low = irregular. High symmetry is the rejected pinwheel.
     stretch: 0.55,
     warp: 0.3,
-    scaleCrop: 1.15,  // >1 pushes the organism off-frame
+    // Frame-scale MULTIPLIER, not a [0,1] control like its neighbours: 1.0
+    // means the organism exactly fits the frame, and values above 1 push it
+    // outward so it overflows and gets cropped, which is the point of the
+    // control. Roughly [0.5, 2.0] in practice.
+    scaleCrop: 1.15,
     edgeSoftness: 0.15,
     invert: 0,
   };
@@ -133,7 +137,7 @@ export function layout(seed, controls) {
   // How many arms are active. formCount 0 -> 3 arms, 1 -> MAX_FORMS.
   const active = 3 + c.formCount * (MAX_FORMS - 3);
 
-  const prims = raw.map((r, i) => {
+  const arms = raw.map((r, i) => {
     // Even spacing is a pinwheel, so the base angle is perturbed by a
     // per-arm jitter scaled by (1 - symmetry).
     const even = baseAngle + (i / MAX_FORMS) * Math.PI * 2;
@@ -161,5 +165,5 @@ export function layout(seed, controls) {
     };
   });
 
-  return { prims: [hub, ...prims], warpP };
+  return { prims: [hub, ...arms], warpP };
 }
