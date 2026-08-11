@@ -264,3 +264,50 @@ test('cullHoles does not fill the exterior', () => {
   const c = cullHoles(m, w, h, 10000);
   assert.equal(c[0], 0, 'background touching the border is not a hole');
 });
+
+// The two tests below pin the connectivity WIRING inside the cull functions,
+// not just the connectivity parameter of labelComponents itself. Mixed
+// connectivity is deliberate: using the same setting for both foreground and
+// background produces the classic diagonal paradox, where a single diagonal
+// line of cells simultaneously separates the two regions on either side of it
+// (under 4-connectivity, since neither region can step across the diagonal)
+// and fails to separate them (under 8-connectivity, since the line itself
+// forms a connected path). Foreground must use 8 so a diagonal chain of
+// pixels reads as one solid form; background must use 4 so that same diagonal
+// chain still counts as a boundary between two different holes/exterior
+// regions rather than fusing them. Without a test built so the two
+// connectivities give different answers, a swapped call inside cullComponents
+// or cullHoles is invisible to every other test in this file.
+test('cullComponents wiring must use 8-connectivity, not 4', () => {
+  // Two 4x4 blocks (16 cells each) touching ONLY at a diagonal corner:
+  // A's corner (5,5) and B's corner (6,6) are diagonal neighbours with no
+  // shared edge. Under 8-connectivity this is one 32-cell component, which
+  // survives minArea=25 whole. Under 4-connectivity it is two 16-cell
+  // components, both below 25, so cullComponents would erase everything.
+  const w = 12, h = 12;
+  const m = mk(w, h, (i, j) => (i >= 2 && i <= 5 && j >= 2 && j <= 5) ||
+                               (i >= 6 && i <= 9 && j >= 6 && j <= 9));
+  const c = cullComponents(m, w, h, 25);
+  assert.equal(c[3 * w + 3], 1, 'block A must survive under 8-connectivity');
+  assert.equal(c[8 * w + 8], 1, 'block B must survive under 8-connectivity');
+});
+
+test('cullHoles wiring must use 4-connectivity, not 8', () => {
+  // A solid rectangle well inside the raster, carrying two 3-cell background
+  // strips that touch ONLY at a diagonal: (12,10) and (13,11) are diagonal
+  // neighbours with no shared edge. Under 4-connectivity these are two
+  // separate 3-cell holes, both below minArea=5, so both get filled. Under
+  // 8-connectivity they fuse into one 6-cell hole, at or above 5, which would
+  // survive unfilled.
+  const w = 26, h = 26;
+  const m = mk(w, h, (i, j) => {
+    if (i < 5 || i > 20 || j < 5 || j > 20) return false;
+    if (j === 10 && (i === 10 || i === 11 || i === 12)) return false; // strip 1
+    if (j === 11 && (i === 13 || i === 14 || i === 15)) return false; // strip 2
+    return true;
+  });
+  const c = cullHoles(m, w, h, 5);
+  for (const [i, j] of [[10, 10], [11, 10], [12, 10], [13, 11], [14, 11], [15, 11]]) {
+    assert.equal(c[j * w + i], 1, `(${i},${j}) must be filled under 4-connectivity`);
+  }
+});
