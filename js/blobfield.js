@@ -88,3 +88,78 @@ export function warp(px, py, amount, p) {
   if (len > 1) { dx /= len; dy /= len; }
   return [px + dx * amount, py + dy * amount];
 }
+
+// The pool is fixed. Form Count fades arms in and out by weight rather than
+// resizing the pool, which is what keeps the control continuous: raising it
+// ADDS an arm and leaves the others exactly where they were.
+export const MAX_FORMS = 7;
+
+export function defaultControls() {
+  return {
+    detail: 0,        // psi perturbation. 0 at full Simplified: the reference
+                      // silhouettes are pure arcs and lines, with no waviness.
+    formCount: 0.5,
+    merge: 0.45,
+    simplify: 0.5,
+    symmetry: 0.25,   // low = irregular. High symmetry is the rejected pinwheel.
+    stretch: 0.55,
+    warp: 0.3,
+    scaleCrop: 1.15,  // >1 pushes the organism off-frame
+    edgeSoftness: 0.15,
+    invert: 0,
+  };
+}
+
+// One connected organism: a central hub plus MAX_FORMS arms, each a tapered
+// capsule running from inside the hub out to a terminal disc.
+export function layout(seed, controls) {
+  const c = Object.assign(defaultControls(), controls);
+  const rng = makeRng(seed);
+
+  // Drawn BEFORE anything weight-dependent, so changing formCount cannot
+  // shift the rng sequence and move existing arms.
+  const hubR = 0.16 + rng() * 0.06;
+  const baseAngle = rng() * Math.PI * 2;
+  const raw = Array.from({ length: MAX_FORMS }, () => ({
+    jitter: rng() * 2 - 1,
+    len: rng(),
+    tip: rng(),
+    root: rng(),
+  }));
+  const warpP = warpParams(rng);
+
+  const hub = { ax: 0, ay: 0, ra: hubR, bx: 0, by: 0, rb: hubR, weight: 1 };
+
+  // How many arms are active. formCount 0 -> 3 arms, 1 -> MAX_FORMS.
+  const active = 3 + c.formCount * (MAX_FORMS - 3);
+
+  const prims = raw.map((r, i) => {
+    // Even spacing is a pinwheel, so the base angle is perturbed by a
+    // per-arm jitter scaled by (1 - symmetry).
+    const even = baseAngle + (i / MAX_FORMS) * Math.PI * 2;
+    const th = even + r.jitter * (1 - c.symmetry) * (Math.PI / MAX_FORMS) * 1.8;
+
+    const len = (0.34 + r.len * 0.30) * (0.65 + c.stretch * 1.05);
+    const tipR = (0.10 + r.tip * 0.13) * (1.25 - c.stretch * 0.45);
+    const rootR = hubR * (0.45 + r.root * 0.35);
+
+    // Root sits INSIDE the hub so the union is genuinely connected.
+    const rootD = hubR * 0.35;
+
+    // weight ramps over one arm's width, so an arm grows in rather than
+    // popping. Arms are ordered, so arm i activates as `active` passes i+1.
+    const weight = Math.max(0, Math.min(1, active - i));
+
+    return {
+      ax: Math.cos(th) * rootD,
+      ay: Math.sin(th) * rootD,
+      ra: rootR,
+      bx: Math.cos(th) * (rootD + len),
+      by: Math.sin(th) * (rootD + len),
+      rb: tipR,
+      weight,
+    };
+  });
+
+  return { prims: [hub, ...prims], warpP };
+}

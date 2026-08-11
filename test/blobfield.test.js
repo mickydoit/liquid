@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams } from '../js/blobfield.js';
+import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS } from '../js/blobfield.js';
 import { fnv1a } from '../js/hash.js';
+
+// Shared by layout tests below, and reused by later tasks.
+const ctl = (o = {}) => Object.assign(defaultControls(), o);
 
 test('tapered capsule: distance is zero on each end cap', () => {
   // A capsule from (-1,0) r=0.3 to (1,0) r=0.1. The far side of each end cap
@@ -89,4 +92,74 @@ test('warp is continuous', () => {
   const [ax, ay] = warp(0.5, 0.5, 0.3, p);
   const [bx, by] = warp(0.5001, 0.5, 0.3, p);
   assert.ok(Math.hypot(bx - ax, by - ay) < 1e-3);
+});
+
+test('layout is deterministic', () => {
+  const a = layout(12345, ctl());
+  const b = layout(12345, ctl());
+  assert.deepEqual(a, b);
+});
+
+test('layout varies with seed', () => {
+  const a = layout(12345, ctl());
+  const b = layout(12346, ctl());
+  assert.notDeepEqual(a.prims, b.prims);
+});
+
+test('layout always returns the full pool', () => {
+  for (const formCount of [0, 0.25, 0.5, 1]) {
+    assert.equal(layout(1, ctl({ formCount })).prims.length, MAX_FORMS + 1);
+  }
+});
+
+test('form count fades arms in without moving the others', () => {
+  // THE continuity requirement: moving a slider must refine the design, not
+  // re-roll it. Arms that were already present must not shift at all.
+  const four = layout(99, ctl({ formCount: 0.25 }));
+  const five = layout(99, ctl({ formCount: 0.5 }));
+  for (let i = 0; i < four.prims.length; i++) {
+    const a = four.prims[i], b = five.prims[i];
+    assert.equal(a.ax, b.ax, `arm ${i} moved in x`);
+    assert.equal(a.ay, b.ay, `arm ${i} moved in y`);
+    assert.equal(a.bx, b.bx, `arm ${i} tip moved in x`);
+    assert.equal(a.by, b.by, `arm ${i} tip moved in y`);
+  }
+  const activeFour = four.prims.filter((p) => p.weight > 0.5).length;
+  const activeFive = five.prims.filter((p) => p.weight > 0.5).length;
+  assert.ok(activeFive > activeFour, `${activeFour} -> ${activeFive}`);
+});
+
+test('every arm is attached to the hub', () => {
+  // The references are one connected organism. A detached arm is a bug.
+  const { prims } = layout(7, ctl({ formCount: 1 }));
+  const hub = prims[0];
+  for (const p of prims.slice(1)) {
+    const d = Math.hypot(p.ax - hub.ax, p.ay - hub.ay);
+    assert.ok(d < hub.ra + p.ra,
+      `arm root at distance ${d} is not overlapping hub radius ${hub.ra}`);
+  }
+});
+
+test('arm angles are not evenly spaced at default symmetry', () => {
+  // Evenly spaced arms ARE the pinwheel the brief rejects. Measure the spread
+  // of gaps between consecutive angles; a pinwheel has near-zero spread.
+  const { prims } = layout(31, ctl({ formCount: 1 }));
+  const angles = prims.slice(1)
+    .filter((p) => p.weight > 0.5)
+    .map((p) => Math.atan2(p.by - p.ay, p.bx - p.ax))
+    .sort((a, b) => a - b);
+  const gaps = angles.map((a, i) => (i === 0
+    ? a + 2 * Math.PI - angles[angles.length - 1]
+    : a - angles[i - 1]));
+  const mean = gaps.reduce((s, g) => s + g, 0) / gaps.length;
+  const spread = Math.sqrt(gaps.reduce((s, g) => s + (g - mean) ** 2, 0) / gaps.length);
+  assert.ok(spread > 0.25, `arm angles too regular, spread ${spread}`);
+});
+
+test('stretch lengthens arms', () => {
+  const armLen = (c) => {
+    const { prims } = layout(5, ctl(c));
+    return Math.hypot(prims[1].bx - prims[1].ax, prims[1].by - prims[1].ay);
+  };
+  assert.ok(armLen({ stretch: 0.9 }) > armLen({ stretch: 0.1 }));
 });
