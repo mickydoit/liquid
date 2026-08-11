@@ -74,3 +74,40 @@ export function signedEdt(mask, w, h) {
   for (let i = 0; i < mask.length; i++) out[i] = mask[i] ? -dOut[i] : dIn[i];
   return out;
 }
+
+// Morphology via the distance transform. Dilation by r is every cell within r
+// of the mask; erosion by r is every masked cell at least r from the boundary.
+// Both use a true circular structuring element, unlike iterative kernels.
+
+export function dilate(mask, w, h, r) {
+  if (r <= 0) return Uint8Array.from(mask);
+  const d = signedEdt(mask, w, h);
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < out.length; i++) out[i] = d[i] <= r ? 1 : 0;
+  return out;
+}
+
+// STRICT comparison. edt is cell-centre to cell-centre, so no inside cell has
+// distance 0 and `<= -r` would be an identity at r = 1 rather than an erosion.
+// Duality with dilate demands `< -r`; getting this wrong makes close() grow the
+// shape by a ring every time instead of leaving it unchanged.
+export function erode(mask, w, h, r) {
+  if (r <= 0) return Uint8Array.from(mask);
+  const d = signedEdt(mask, w, h);
+  const out = new Uint8Array(mask.length);
+  for (let i = 0; i < out.length; i++) out[i] = d[i] < -r ? 1 : 0;
+  return out;
+}
+
+// Fills gaps and pinholes narrower than r.
+export function close(mask, w, h, r) {
+  if (r <= 0) return Uint8Array.from(mask);
+  return erode(dilate(mask, w, h, r), w, h, r);
+}
+
+// Removes filaments and spurs thinner than r. A waist wider than 2r survives,
+// which is exactly how an intentional waist is told from a hairline bridge.
+export function open(mask, w, h, r) {
+  if (r <= 0) return Uint8Array.from(mask);
+  return dilate(erode(mask, w, h, r), w, h, r);
+}

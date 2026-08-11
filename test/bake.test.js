@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { edt, signedEdt } from '../js/bake.js';
+import { edt, signedEdt, dilate, erode, close, open } from '../js/bake.js';
 
 const mk = (w, h, fn) => {
   const m = new Uint8Array(w * h);
@@ -105,4 +105,70 @@ test('signedEdt has no zero level set — magnitude 1 is the nearest boundary va
   const row = [];
   for (let i = 0; i < w; i++) row.push(d[4 * w + i]);
   assert.deepEqual(row, [2, 1, -1, -2, -3, -2, -1, 1, 2]);
+});
+
+const count = (m) => m.reduce((s, v) => s + v, 0);
+
+test('dilate grows and erode shrinks', () => {
+  const w = 21, h = 21;
+  const m = mk(w, h, (i, j) => i >= 8 && i <= 12 && j >= 8 && j <= 12);
+  assert.ok(count(dilate(m, w, h, 2)) > count(m));
+  assert.ok(count(erode(m, w, h, 1)) < count(m));
+});
+
+test('close fills a small gap without growing the form', () => {
+  // Two blocks separated by a 2-cell gap. Closing at radius 3 must bridge it.
+  const w = 31, h = 15;
+  const m = mk(w, h, (i, j) => j >= 5 && j <= 9 && ((i >= 8 && i <= 13) || (i >= 16 && i <= 21)));
+  const c = close(m, w, h, 3);
+  assert.equal(c[7 * w + 14], 1, 'gap should be bridged');
+  assert.equal(c[0], 0, 'far background must stay background');
+});
+
+test('open removes a hairline bridge but keeps a thick waist', () => {
+  // THIS is the distinction the brief hinges on: hairline filaments go,
+  // intentional waists stay. They differ only in width, so a single opening
+  // radius between the two separates them.
+  const w = 41, h = 21;
+  const hairline = mk(w, h, (i, j) =>
+    (i >= 4 && i <= 12 && j >= 6 && j <= 14) ||     // block A
+    (i >= 28 && i <= 36 && j >= 6 && j <= 14) ||    // block B
+    (i > 12 && i < 28 && j === 10));                // 1-cell bridge
+  const opened = open(hairline, w, h, 2);
+  assert.equal(opened[10 * w + 20], 0, 'hairline bridge must be removed');
+  assert.equal(opened[10 * w + 8], 1, 'block A must survive');
+
+  const waist = mk(w, h, (i, j) =>
+    (i >= 4 && i <= 12 && j >= 6 && j <= 14) ||
+    (i >= 28 && i <= 36 && j >= 6 && j <= 14) ||
+    (i > 12 && i < 28 && j >= 7 && j <= 13));       // 7-cell waist
+  assert.equal(open(waist, w, h, 2)[10 * w + 20], 1, 'thick waist must survive');
+});
+
+test('radius 0 is a no-op', () => {
+  const w = 9, h = 9;
+  const m = mk(w, h, (i, j) => i > 2 && j > 2);
+  assert.deepEqual([...close(m, w, h, 0)], [...m]);
+  assert.deepEqual([...open(m, w, h, 0)], [...m]);
+});
+
+test('closing a convex block is idempotent', () => {
+  // The property that catches an off-by-one between dilate and erode. If
+  // erosion peels one ring fewer than dilation adds, this grows every time it
+  // runs — silently, and compounding through the four-stage cleanup chain.
+  const w = 24, h = 24;
+  const m = mk(w, h, (i, j) => i >= 9 && i <= 14 && j >= 9 && j <= 14);
+  const once = close(m, w, h, 2);
+  assert.deepEqual([...once], [...m], 'closing a convex shape must not change it');
+  assert.deepEqual([...close(once, w, h, 2)], [...once], 'and must be stable');
+});
+
+test('erode and dilate are dual', () => {
+  // erode(r) must equal the complement of dilating the complement by r.
+  // This is what pins the strict `< -r` comparison.
+  const w = 25, h = 19;
+  const m = mk(w, h, (i, j) => Math.hypot(i - 12, j - 9) < 7);
+  const inv = Uint8Array.from(m, (v) => (v ? 0 : 1));
+  const viaDual = Uint8Array.from(dilate(inv, w, h, 3), (v) => (v ? 0 : 1));
+  assert.deepEqual([...erode(m, w, h, 3)], [...viaDual]);
 });
