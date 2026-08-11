@@ -1001,7 +1001,9 @@ git commit -m "feat: png encoder and headless field renderer"
   - `edt(mask, w, h) → Float64Array` — for each cell, the distance **in cells** to the nearest cell where `mask` is 0. Cells where `mask` is 0 get 0.
   - `signedEdt(mask, w, h) → Float64Array` — negative inside (mask 1), positive outside
 
-**Design note:** this is Felzenszwalb & Huttenlocher's exact algorithm — a 1D lower-envelope-of-parabolas transform run down the columns, then across the rows. It is exact and O(n), and everything else in the bake is expressed in terms of it: dilation by r is `signedEdt <= r`, erosion by r is `signedEdt <= -r`. Building morphology on the EDT avoids the square-structuring-element artefacts of iterative dilate/erode.
+**Design note:** this is Felzenszwalb & Huttenlocher's exact algorithm — a 1D lower-envelope-of-parabolas transform run down the columns, then across the rows. It is exact and O(n), and everything else in the bake is expressed in terms of it: dilation by r is `signedEdt <= r`, erosion by r is `signedEdt < -r`. Building morphology on the EDT avoids the square-structuring-element artefacts of iterative dilate/erode.
+
+**The erosion comparison is strict, and that is not a stylistic choice.** `edt` measures cell-centre to cell-centre, so no inside cell ever has distance 0 — the minimum magnitude is 1. `{d <= -r}` would therefore retain every inside cell at `r = 1` (an identity, not an erosion) while `{d <= r}` correctly adds one ring, so dilation would add `r` rings while erosion peeled only `r - 1`. Closing would stop being idempotent and every shape would come out one ring fatter. Duality requires `erode(r) = complement(dilate(r, complement))` = `{d < -r}` exactly.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1214,6 +1216,27 @@ test('radius 0 is a no-op', () => {
   assert.deepEqual([...close(m, w, h, 0)], [...m]);
   assert.deepEqual([...open(m, w, h, 0)], [...m]);
 });
+
+test('closing a convex block is idempotent', () => {
+  // The property that catches an off-by-one between dilate and erode. If
+  // erosion peels one ring fewer than dilation adds, this grows every time it
+  // runs — silently, and compounding through the four-stage cleanup chain.
+  const w = 24, h = 24;
+  const m = mk(w, h, (i, j) => i >= 9 && i <= 14 && j >= 9 && j <= 14);
+  const once = close(m, w, h, 2);
+  assert.deepEqual([...once], [...m], 'closing a convex shape must not change it');
+  assert.deepEqual([...close(once, w, h, 2)], [...once], 'and must be stable');
+});
+
+test('erode and dilate are dual', () => {
+  // erode(r) must equal the complement of dilating the complement by r.
+  // This is what pins the strict `< -r` comparison.
+  const w = 25, h = 19;
+  const m = mk(w, h, (i, j) => Math.hypot(i - 12, j - 9) < 7);
+  const inv = Uint8Array.from(m, (v) => (v ? 0 : 1));
+  const viaDual = Uint8Array.from(dilate(inv, w, h, 3), (v) => (v ? 0 : 1));
+  assert.deepEqual([...erode(m, w, h, 3)], [...viaDual]);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -1238,11 +1261,15 @@ export function dilate(mask, w, h, r) {
   return out;
 }
 
+// STRICT comparison. edt is cell-centre to cell-centre, so no inside cell has
+// distance 0 and `<= -r` would be an identity at r = 1 rather than an erosion.
+// Duality with dilate demands `< -r`; getting this wrong makes close() grow the
+// shape by a ring every time instead of leaving it unchanged.
 export function erode(mask, w, h, r) {
   if (r <= 0) return Uint8Array.from(mask);
   const d = signedEdt(mask, w, h);
   const out = new Uint8Array(mask.length);
-  for (let i = 0; i < out.length; i++) out[i] = d[i] <= -r ? 1 : 0;
+  for (let i = 0; i < out.length; i++) out[i] = d[i] < -r ? 1 : 0;
   return out;
 }
 
