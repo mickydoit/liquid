@@ -325,14 +325,73 @@ test('bake produces a grid matching the requested aspect', () => {
   assert.equal(b.w, Math.round(256 * FORMATS.portrait));
 });
 
+test('res is the long edge in every format', () => {
+  // Otherwise a landscape export silently costs 2.25x a portrait one.
+  const f = (x, y) => Math.hypot(x, y) - 0.5;
+  for (const [name, aspect] of Object.entries(FORMATS)) {
+    const b = bake(f, { aspect, res: 200 });
+    assert.equal(Math.max(b.w, b.h), 200, `${name}: long edge should be 200`);
+    assert.ok(Math.abs(b.w / b.h - aspect) < 0.01, `${name}: aspect ${b.w / b.h}`);
+  }
+});
+
+test('sample reproduces an asymmetric analytic field', () => {
+  // The guard against coordinate-mapping errors. A y-flip, an x-mirror, an
+  // inverted aspect or a wrong `scale` all leave a radially symmetric field
+  // looking correct — only an OFF-CENTRE probe can tell them apart.
+  const f = (x, y) => Math.hypot(x, y - 0.5) - 0.2;
+  const b = bake(f, { aspect: FORMATS.portrait, res: 400, simplify: 0 });
+  const cell = 2 / b.h;
+  for (const [x, y] of [[0, 0.5], [0, 0.7], [0, 0.3], [0.2, 0.5], [-0.2, 0.5], [0, -0.5]]) {
+    assert.ok(Math.abs(b.sample(x, y) - f(x, y)) < 4 * cell,
+      `at (${x},${y}): got ${b.sample(x, y)}, want ${f(x, y)}`);
+  }
+  // The blob sits ABOVE centre. Mirroring y would move it below.
+  assert.ok(b.sample(0, 0.5) < 0, 'inside the blob');
+  assert.ok(b.sample(0, -0.5) > 0, 'the mirrored position must be outside');
+});
+
+test('cleanup actually removes specks and pinholes', () => {
+  // A field built to HAVE both, so the cleanup stages are genuinely exercised.
+  // The seed-derived fields happen to be a single clean component, which is why
+  // this uses an analytic field instead.
+  //
+  // The radii are not arbitrary. At res 300 square, a cell is 2/300 world, and
+  // bake's own thresholds are minArea 36 -> 756 cells and minHole 36 -> 936 as
+  // simplify goes 0 -> 1, with openR 0.9 -> 5.7. So:
+  //   speck   r = 0.06  = 9.0 cells, area 254 — above minArea at simplify 0 so
+  //                       it EXISTS to be culled, below it at simplify 1 so it
+  //                       goes, and wider than openR so opening cannot erase it
+  //                       and steal the credit.
+  //   pinhole r = 0.053 = 7.9 cells, area 199 — likewise straddles minHole, and
+  //                       is wider than closeR so closing cannot fill it first.
+  // Verified: removing cullComponents leaves 2 components in `clean`; removing
+  // cullHoles leaves the pinhole open. Both make this test fail.
+  const body = (x, y) => Math.hypot(x, y) - 0.55;
+  const speck = (x, y) => Math.hypot(x - 0.5, y - 0.8) - 0.06;
+  const pinhole = (x, y) => 0.053 - Math.hypot(x - 0.1, y - 0.1);
+  const f = (x, y) => Math.min(Math.max(body(x, y), pinhole(x, y)), speck(x, y));
+
+  const dirty = bake(f, { aspect: FORMATS.square, res: 300, simplify: 0 });
+  const clean = bake(f, { aspect: FORMATS.square, res: 300, simplify: 1 });
+
+  assert.equal(labelComponents(dirty.mask, dirty.w, dirty.h, 8).sizes.length, 2,
+    'the fixture must start with a speck, or nothing is being culled');
+  assert.ok(dirty.sample(0.1, 0.1) > 0, 'the fixture must start with a pinhole');
+  assert.equal(labelComponents(clean.mask, clean.w, clean.h, 8).sizes.length, 1,
+    'cullComponents should leave one component');
+  assert.ok(clean.sample(0.1, 0.1) < 0, 'cullHoles should fill the pinhole');
+  assert.notDeepEqual([...dirty.mask], [...clean.mask], 'simplify must do something');
+});
+
 test('bake sample is negative inside the form and positive far outside', () => {
   const b = baked();
   assert.ok(b.sample(0, 0) < 0, 'hub should be inside');
   assert.ok(b.sample(50, 50) > 0, 'far outside the grid must read as outside');
 });
 
-test('bake removes specks and pinholes', () => {
-  const b = baked({ simplify: 0.7 });
+test('a baked blob field carries no specks', () => {
+  const b = baked();
   const total = b.w * b.h;
   const { sizes } = labelComponents(b.mask, b.w, b.h, 8);
   const minArea = total * 0.002;

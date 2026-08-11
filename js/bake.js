@@ -194,7 +194,11 @@ export const FORMATS = { portrait: 2 / 3, square: 1, landscape: 3 / 2 };
 // `simplify` in [0,1] scales all four cleanup radii together, so one control
 // takes the result from "every detail kept" to "macro-forms only".
 export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 0.5 } = {}) {
-  const h = res, w = Math.round(res * aspect);
+  // `res` is the LONG edge, so a landscape bake costs the same as a portrait
+  // one. Deriving `h = res` unconditionally would make landscape 2.25x the
+  // work of portrait at the same nominal resolution, for no stated reason.
+  const w = aspect >= 1 ? res : Math.round(res * aspect);
+  const h = aspect >= 1 ? Math.round(res / aspect) : res;
   const total = w * h;
 
   // World units per cell. y spans [-1, 1] over h cells.
