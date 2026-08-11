@@ -125,24 +125,71 @@ test('close fills a small gap without growing the form', () => {
   assert.equal(c[0], 0, 'far background must stay background');
 });
 
-test('open removes a hairline bridge but keeps a thick waist', () => {
+// Test-only helper: count 8-connected foreground components via iterative
+// flood fill (a stack, not recursion, so a large component can't blow the
+// call stack). Not a candidate for js/bake.js — a real component labeller is
+// a later task's job, and this is deliberately minimal (no labels returned,
+// just a count) so it can't be mistaken for that.
+function countComponents8ForTest(mask, w, h) {
+  const seen = new Uint8Array(mask.length);
+  let components = 0;
+  for (let start = 0; start < mask.length; start++) {
+    if (!mask[start] || seen[start]) continue;
+    components++;
+    const stack = [start];
+    seen[start] = 1;
+    while (stack.length) {
+      const idx = stack.pop();
+      const x = idx % w, y = (idx - x) / w;
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          if (dx === 0 && dy === 0) continue;
+          const nx = x + dx, ny = y + dy;
+          if (nx < 0 || nx >= w || ny < 0 || ny >= h) continue;
+          const nIdx = ny * w + nx;
+          if (mask[nIdx] && !seen[nIdx]) {
+            seen[nIdx] = 1;
+            stack.push(nIdx);
+          }
+        }
+      }
+    }
+  }
+  return components;
+}
+
+test('open severs a hairline bridge into two components but keeps a thick waist joined', () => {
   // THIS is the distinction the brief hinges on: hairline filaments go,
-  // intentional waists stay. They differ only in width, so a single opening
-  // radius between the two separates them.
+  // intentional waists stay. That is a CONNECTIVITY claim — a severed bridge
+  // must split the shape into two components, a surviving waist must not —
+  // so this counts components rather than probing one cell. A single probe
+  // point can't tell the two cases apart here: opening is a local operator,
+  // and a point deep inside a corridor reads the same whether or not distant
+  // blocks even exist.
   const w = 41, h = 21;
   const hairline = mk(w, h, (i, j) =>
     (i >= 4 && i <= 12 && j >= 6 && j <= 14) ||     // block A
     (i >= 28 && i <= 36 && j >= 6 && j <= 14) ||    // block B
     (i > 12 && i < 28 && j === 10));                // 1-cell bridge
-  const opened = open(hairline, w, h, 2);
-  assert.equal(opened[10 * w + 20], 0, 'hairline bridge must be removed');
-  assert.equal(opened[10 * w + 8], 1, 'block A must survive');
+  const openedHairline = open(hairline, w, h, 2);
+  assert.equal(
+    countComponents8ForTest(openedHairline, w, h), 2,
+    'severed hairline bridge must leave two separate components'
+  );
+  assert.equal(openedHairline[10 * w + 8], 1, 'block A must survive');
+  assert.equal(openedHairline[10 * w + 32], 1, 'block B must survive');
 
   const waist = mk(w, h, (i, j) =>
     (i >= 4 && i <= 12 && j >= 6 && j <= 14) ||
     (i >= 28 && i <= 36 && j >= 6 && j <= 14) ||
     (i > 12 && i < 28 && j >= 7 && j <= 13));       // 7-cell waist
-  assert.equal(open(waist, w, h, 2)[10 * w + 20], 1, 'thick waist must survive');
+  const openedWaist = open(waist, w, h, 2);
+  assert.equal(
+    countComponents8ForTest(openedWaist, w, h), 1,
+    'thick waist must keep the shape as a single component'
+  );
+  assert.equal(openedWaist[10 * w + 8], 1, 'block A must survive');
+  assert.equal(openedWaist[10 * w + 32], 1, 'block B must survive');
 });
 
 test('radius 0 is a no-op', () => {
