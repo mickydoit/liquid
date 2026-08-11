@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS } from '../js/blobfield.js';
+import { sdTaperedCapsule, unionRound, makeRng, warp, warpParams, layout, defaultControls, MAX_FORMS, blobField, makeBlobField } from '../js/blobfield.js';
 import { fnv1a } from '../js/hash.js';
 
 // Shared by layout tests below, and reused by later tasks.
@@ -162,4 +162,58 @@ test('stretch lengthens arms', () => {
     return Math.hypot(prims[1].bx - prims[1].ax, prims[1].by - prims[1].ay);
   };
   assert.ok(armLen({ stretch: 0.9 }) > armLen({ stretch: 0.1 }));
+});
+
+test('field is negative at the hub and positive far away', () => {
+  const { field } = makeBlobField(42, ctl());
+  assert.ok(field(0, 0) < 0, 'hub should be inside');
+  assert.ok(field(9, 9) > 0, 'far field should be outside');
+});
+
+test('field is finite everywhere on a dense grid', () => {
+  const { field } = makeBlobField(42, ctl({ warp: 0.4, merge: 0.8 }));
+  for (let j = 0; j < 60; j++) {
+    for (let i = 0; i < 60; i++) {
+      const v = field(-2 + (4 * i) / 59, -2 + (4 * j) / 59);
+      assert.ok(Number.isFinite(v), `non-finite at ${i},${j}`);
+    }
+  }
+});
+
+test('zero-weight arms contribute nothing', () => {
+  // A faded-out arm must vanish completely, not leave a hairline of
+  // zero-radius points behind.
+  const three = makeBlobField(42, ctl({ formCount: 0 }));
+  let inkAtThree = 0;
+  const probe = (f) => {
+    let n = 0;
+    for (let j = 0; j < 80; j++) {
+      for (let i = 0; i < 80; i++) {
+        if (f(-1.6 + (3.2 * i) / 79, -1.6 + (3.2 * j) / 79) < 0) n++;
+      }
+    }
+    return n;
+  };
+  inkAtThree = probe(three.field);
+  const seven = makeBlobField(42, ctl({ formCount: 1 }));
+  assert.ok(probe(seven.field) > inkAtThree, 'more arms should mean more ink');
+});
+
+test('merge deepens the waist between hub and arm', () => {
+  // The fillet must actually add material at the joins as merge rises.
+  const probeJoin = (merge) => {
+    const { field, prims } = makeBlobField(42, ctl({ merge }));
+    const arm = prims[1];
+    // A point just off the axis, near where the arm leaves the hub.
+    return field(arm.ax * 1.4 + 0.02, arm.ay * 1.4 + 0.02);
+  };
+  assert.ok(probeJoin(0.9) < probeJoin(0.05), 'higher merge should add material');
+});
+
+test('field is deterministic', () => {
+  const a = makeBlobField(3, ctl()), b = makeBlobField(3, ctl());
+  for (let i = 0; i < 50; i++) {
+    const x = -1.5 + (3 * i) / 49;
+    assert.equal(a.field(x, 0.3), b.field(x, 0.3));
+  }
 });

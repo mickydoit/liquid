@@ -167,3 +167,46 @@ export function layout(seed, controls) {
 
   return { prims: [hub, ...arms], warpP };
 }
+
+// Below this weight an arm is gone entirely. Scaling radii to zero is not
+// enough: a zero-radius capsule is still a line of zero-distance points, which
+// would leave a hairline scratch exactly where the arm faded out.
+const WEIGHT_EPS = 1e-3;
+
+// `controls` must be a COMPLETE control object — run it through
+// defaultControls() once in the caller. This is evaluated per cell during the
+// bake (~500k times), so allocating a merged object here would dominate.
+export function blobField(px, py, prims, warpP, c) {
+  const [wx, wy] = warp(px, py, c.warp * 0.35, warpP);
+
+  // Merge maps to the fillet radius. Scaled by hub radius so the waist keeps
+  // its proportion as the organism scales.
+  const kf = c.merge * 0.22;
+
+  let d = Infinity;
+  for (const p of prims) {
+    if (p.weight <= WEIGHT_EPS) continue;
+    const w = p.weight;
+    const di = sdTaperedCapsule(wx, wy, p.ax, p.ay, p.ra * w, p.bx, p.by, p.rb * w);
+    d = (d === Infinity) ? di : unionRound(d, di, kf);
+  }
+  if (d === Infinity) return Infinity;
+
+  // Edge Softness rounds the field itself, so it smooths the CONTOUR and
+  // therefore the exported path. It is not an opacity ramp.
+  d -= c.edgeSoftness * 0.05;
+
+  return c.invert ? -d : d;
+}
+
+export function makeBlobField(seed, controls) {
+  const c = Object.assign(defaultControls(), controls);
+  const { prims, warpP } = layout(seed, c);
+  // Scale/Crop enlarges the organism relative to the frame, which is what
+  // pushes arms off the edge and takes the centre out of view.
+  const s = c.scaleCrop;
+  return {
+    prims, warpP, controls: c,
+    field: (x, y) => blobField(x / s, y / s, prims, warpP, c) * s,
+  };
+}
