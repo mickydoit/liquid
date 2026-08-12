@@ -264,7 +264,7 @@ export function makeBlobField(seed, controls) {
   // Built once: psi's state is constant across the field, and rebuilding it
   // per cell would allocate an object ~500k times during a bake.
   c._psiState = perturbState(c.detail);
-  const { prims, warpP } = layout(seed, c);
+  const { prims, warpP, offset } = layout(seed, c);
   // Scale/Crop enlarges the organism relative to the frame, which is what
   // pushes arms off the edge and takes the centre out of view.
   // Floored, not clamped to a "sensible" range: at 0 this divides by zero
@@ -273,9 +273,16 @@ export function makeBlobField(seed, controls) {
   // convention. 0.05 is far below any usable value, so it cannot alter a
   // legitimate input.
   const s = Math.max(0.05, c.scaleCrop);
+  // The offset is a FRAMING decision, so it belongs in screen units. layout()
+  // bakes it into the primitives in blobfield space, where evaluating at x / s
+  // would put the hub on screen at offset * s — coupling framing to scale, and
+  // by a different amount per seed. This correction cancels that, so the hub
+  // lands at `offset` on screen at every scaleCrop.
+  const [ox, oy] = offset;
+  const k = (s - 1) / s;
   return {
-    prims, warpP, controls: c,
-    field: (x, y) => blobField(x / s, y / s, prims, warpP, c) * s,
+    prims, warpP, offset, controls: c,
+    field: (x, y) => blobField(x / s + ox * k, y / s + oy * k, prims, warpP, c) * s,
   };
 }
 

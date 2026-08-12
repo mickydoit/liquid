@@ -385,6 +385,37 @@ test('form count continuity survives the offset', () => {
   }
 });
 
+test('the on-screen composition offset does not move with scaleCrop', () => {
+  // The whole point: scale controls form SIZE, the offset controls FRAMING,
+  // and the two must not interact. Before this fix the hub appeared at
+  // offset * scaleCrop, so raising the crop flung the organism off-frame by
+  // a different amount for every seed.
+  for (const seed of [11, 23, 47, 91, 138]) {
+    const { offset } = layout(seed, ctl());
+    for (const scaleCrop of [1.0, 1.6, 2.3]) {
+      const { field } = makeBlobField(seed, ctl({ scaleCrop }));
+      // The hub's screen position should be `offset` at every scale.
+      assert.ok(field(offset[0], offset[1]) < 0,
+        `seed ${seed} scaleCrop ${scaleCrop}: hub not at the offset on screen`);
+    }
+  }
+});
+
+test('scaleCrop still scales the forms', () => {
+  // Guard against "fixing" the coupling by disabling the scale entirely.
+  const ink = (scaleCrop) => {
+    const { field } = makeBlobField(11, ctl({ scaleCrop }));
+    let n = 0;
+    for (let j = 0; j < 60; j++) {
+      for (let i = 0; i < 60; i++) {
+        if (field(-1 + (2 * i) / 59, -1 + (2 * j) / 59) < 0) n++;
+      }
+    }
+    return n;
+  };
+  assert.ok(ink(2.0) > ink(1.0), 'a larger scaleCrop should cover more area');
+});
+
 test('depth-zero controls ignore the sound entirely', () => {
   // simplify, edgeSoftness and invert are pure art direction (DEPTH 0, or a
   // hard pass-through for invert). Whatever the sound is, resolveControls
