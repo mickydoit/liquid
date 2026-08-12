@@ -6,6 +6,7 @@
   "description": "Cymatic water from sound — standing-wave fields rendered as transparent liquid, exported as editable vectors.",
   "scripts": {
     "test": "node --test test/*.test.js",
-    "start": "python3 -m http.server 8788"
+    "start": "python3 -m http.server 8788",
+    "refs": "node tools/render.mjs out 11 23 47"
   }
 }
