@@ -2058,10 +2058,15 @@ for (const name of Object.keys(SCENARIOS)) {
   });
 
   test(`${name}: ink covers a substantial area`, () => {
+    // The shared 0.08-0.85 range is a sanity guard. A scenario may narrow it
+    // via `expect.ink`, and one does: without a tight upper bound, "cropped"
+    // degenerates into "the frame is mostly solid", which passes every other
+    // check while destroying the negative space the whole look depends on.
+    const [lo, hi] = SCENARIOS[name].expect.ink ?? [0.08, 0.85];
     for (const seed of SEEDS) {
       const b = bakeScenario(name, seed);
       const ink = b.mask.reduce((s, v) => s + v, 0) / (b.w * b.h);
-      assert.ok(ink > 0.08 && ink < 0.85, `${name}/${seed}: ink ${ink}`);
+      assert.ok(ink > lo && ink < hi, `${name}/${seed}: ink ${ink.toFixed(3)}, want ${lo}-${hi}`);
     }
   });
 
@@ -2211,10 +2216,18 @@ export const SCENARIOS = {
   //    cropping yields separate pieces or one continuous wedge is fixed by each
   //    seed's arm-angle draw, not reachable by any control. Edge coverage is
   //    what this scenario asserts instead.
+  //
+  //    `edges: 2`, not 3. Requiring three edges forced the crop so far in that
+  //    the frame filled with solid black and no form language survived — every
+  //    seed landed at ink 0.37-0.59 and read as an abstract corner rather than
+  //    cropped forms. The reference posters mostly show forms entering from
+  //    TWO edges. `ink` is also bounded tightly here rather than by the loose
+  //    shared 0.08-0.85 guard, because "strong negative space" has to be
+  //    enforced, not merely permitted.
   large: {
     formCount: 0.1, stretch: 0.60, merge: 0.20, simplify: 0.75,
-    warp: 0.25, symmetry: 0.15, scaleCrop: 2.30, detail: 0,
-    expect: { edges: 3, maxBboxFill: 0.80 },
+    warp: 0.25, symmetry: 0.15, scaleCrop: 1.60, detail: 0,
+    expect: { edges: 2, maxBboxFill: 0.62, ink: [0.15, 0.35] },
   },
   // 2. The complete-mark case. One connected organism, five to seven arms.
   elongated: {
