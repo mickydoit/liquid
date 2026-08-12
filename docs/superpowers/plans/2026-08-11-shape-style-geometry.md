@@ -929,6 +929,109 @@ git commit -m "feat: seeded composition offset so the organism can leave the fra
 
 ---
 
+### Task 3d: Apply the composition offset in screen space
+
+**Files:**
+- Modify: `js/blobfield.js`
+- Test: `test/blobfield.test.js`
+
+**Interfaces:** no signature changes. `makeBlobField`'s returned `field` changes behaviour; `layout` is untouched.
+
+**The problem.** `layout` bakes the offset into the primitives in blobfield space, and `makeBlobField` then evaluates `blobField(x / s, y / s) * s`. So a hub at offset `o` appears on screen at `o * s` — the offset is multiplied by Scale/Crop. Scale and framing are therefore tangled: raising the crop enlarges the forms *and* flings the organism further off-frame, by a different amount for every seed.
+
+Measured over `large`'s five acceptance seeds, sweeping `scaleCrop` from 1.00 to 2.45: the number of seeds keeping a round feature (hub or terminal disc) near frame centre falls from 5/5 at 1.10 to 0/5 by 1.80. The failure modes diverge — at high crop seed 11's ink drops to 0.00 because the frame lands on empty space beside the organism, while seed 23's climbs to 0.57 because the frame lands inside the mass. No single value satisfies all five seeds, which is why three rounds of tuning could not converge.
+
+**The fix.** Evaluate the field so the offset's *on-screen* magnitude is independent of `s`. Wanting the hub to appear at screen position `o` rather than `o * s`:
+
+```
+field(x) = blobField(x / s + o·(s − 1) / s)
+```
+
+Check: at `s = 1` the correction is zero. At `s = 2, o = 0.5` it is `0.25`, so `field(0.5) = blobField(0.5/2 + 0.25) = blobField(0.5)` — the hub, exactly at screen `0.5`.
+
+Then Scale/Crop controls form **size** only and the offset controls **framing** only, which is the separation the spec implies: "Scale/Crop: enlarges the overall composition so forms extend beyond the frame" is a size control, "deliberate off-centre positioning" is a framing one.
+
+- [ ] **Step 1: Write the failing test**
+
+Append to `test/blobfield.test.js`:
+
+```js
+test('the on-screen composition offset does not move with scaleCrop', () => {
+  // The whole point: scale controls form SIZE, the offset controls FRAMING,
+  // and the two must not interact. Before this fix the hub appeared at
+  // offset * scaleCrop, so raising the crop flung the organism off-frame by
+  // a different amount for every seed.
+  for (const seed of [11, 23, 47, 91, 138]) {
+    const { offset } = layout(seed, ctl());
+    for (const scaleCrop of [1.0, 1.6, 2.3]) {
+      const { field } = makeBlobField(seed, ctl({ scaleCrop }));
+      // The hub's screen position should be `offset` at every scale.
+      assert.ok(field(offset[0], offset[1]) < 0,
+        `seed ${seed} scaleCrop ${scaleCrop}: hub not at the offset on screen`);
+    }
+  }
+});
+
+test('scaleCrop still scales the forms', () => {
+  // Guard against "fixing" the coupling by disabling the scale entirely.
+  const ink = (scaleCrop) => {
+    const { field } = makeBlobField(11, ctl({ scaleCrop }));
+    let n = 0;
+    for (let j = 0; j < 60; j++) {
+      for (let i = 0; i < 60; i++) {
+        if (field(-1 + (2 * i) / 59, -1 + (2 * j) / 59) < 0) n++;
+      }
+    }
+    return n;
+  };
+  assert.ok(ink(2.0) > ink(1.0), 'a larger scaleCrop should cover more area');
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test test/blobfield.test.js`
+Expected: FAIL on the first test — the hub sits at `offset * scaleCrop`, not `offset`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `makeBlobField`, replace the `field` closure:
+
+```js
+  // The offset is a FRAMING decision, so it belongs in screen units. layout()
+  // bakes it into the primitives in blobfield space, where evaluating at x / s
+  // would put the hub on screen at offset * s — coupling framing to scale, and
+  // by a different amount per seed. This correction cancels that, so the hub
+  // lands at `offset` on screen at every scaleCrop.
+  const [ox, oy] = offset;
+  const k = (s - 1) / s;
+  return {
+    prims, warpP, offset, controls: c,
+    field: (x, y) => blobField(x / s + ox * k, y / s + oy * k, prims, warpP, c) * s,
+  };
+```
+
+`layout` already returns `offset`; destructure it alongside `prims` and `warpP`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test test/blobfield.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Confirm the rest of the suite**
+
+Run: `npm test`
+Expected: `large`'s acceptance tests may still fail — they are retuned in a later step. Everything else must pass, including `elongated` and `intermediate`.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add js/blobfield.js test/blobfield.test.js
+git commit -m "fix: apply the composition offset in screen space, not organism space"
+```
+
+---
+
 ### Task 5: PNG writer and field rasteriser
 
 **Files:**
