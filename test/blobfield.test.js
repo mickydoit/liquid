@@ -165,8 +165,12 @@ test('stretch lengthens arms', () => {
 });
 
 test('field is negative at the hub and positive far away', () => {
-  const { field } = makeBlobField(42, ctl());
-  assert.ok(field(0, 0) < 0, 'hub should be inside');
+  // The hub no longer sits at the world origin now that layout() offsets the
+  // organism (Task 3c), so probe its actual centre rather than (0, 0).
+  const { field, prims, controls } = makeBlobField(42, ctl());
+  const hub = prims[0];
+  const s = controls.scaleCrop;
+  assert.ok(field(hub.ax * s, hub.ay * s) < 0, 'hub should be inside');
   assert.ok(field(9, 9) > 0, 'far field should be outside');
 });
 
@@ -338,6 +342,47 @@ test('scaleCrop resolves to a finite multiplier at or above its floor, uncapped 
   const quiet = resolveControls({}, allZero).scaleCrop;
   assert.ok(loud > quiet, `scaleCrop should track rms: loud=${loud} quiet=${quiet}`);
   assert.ok(loud > 1, `scaleCrop ${loud} never exceeds 1`);
+});
+
+test('layout offsets the organism off-centre', () => {
+  const { prims, offset } = layout(7, ctl());
+  assert.ok(Array.isArray(offset) && offset.length === 2, 'offset should be a pair');
+  const mag = Math.hypot(offset[0], offset[1]);
+  assert.ok(mag >= 0.25 && mag <= 0.70, `offset magnitude ${mag} out of range`);
+  // The hub must actually move with it, or the offset is decorative.
+  assert.ok(Math.abs(prims[0].ax - offset[0]) < 1e-12);
+  assert.ok(Math.abs(prims[0].ay - offset[1]) < 1e-12);
+});
+
+test('the offset translates the whole organism rigidly', () => {
+  // Arms must keep their positions RELATIVE to the hub, or the offset would
+  // deform the mark rather than move it.
+  const a = layout(7, ctl());
+  const hub = a.prims[0];
+  for (const p of a.prims.slice(1)) {
+    const d = Math.hypot(p.ax - hub.ax, p.ay - hub.ay);
+    assert.ok(d < hub.ra + p.ra, `arm root detached from hub: ${d}`);
+  }
+});
+
+test('the offset varies with seed but not with any control', () => {
+  const base = layout(7, ctl()).offset;
+  assert.notDeepEqual(layout(8, ctl()).offset, base, 'seed should change it');
+  for (const k of ['formCount', 'stretch', 'merge', 'warp', 'symmetry', 'scaleCrop']) {
+    assert.deepEqual(layout(7, ctl({ [k]: 0.9 })).offset, base, `${k} moved the offset`);
+  }
+});
+
+test('form count continuity survives the offset', () => {
+  // Re-pinning Task 3's property: the offset draw must not sit anywhere that
+  // a weight-dependent branch could shift.
+  const four = layout(99, ctl({ formCount: 0.25 }));
+  const five = layout(99, ctl({ formCount: 0.5 }));
+  assert.deepEqual(four.offset, five.offset);
+  for (let i = 0; i < four.prims.length; i++) {
+    assert.equal(four.prims[i].ax, five.prims[i].ax, `arm ${i} moved`);
+    assert.equal(four.prims[i].by, five.prims[i].by, `arm ${i} tip moved`);
+  }
 });
 
 test('depth-zero controls ignore the sound entirely', () => {

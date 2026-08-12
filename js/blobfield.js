@@ -127,6 +127,17 @@ export function layout(seed, controls) {
   // shift the rng sequence and move existing arms.
   const hubR = 0.16 + rng() * 0.06;
   const baseAngle = rng() * Math.PI * 2;
+
+  // Composition offset. The spec asks for an off-centre arrangement with no
+  // obvious centre point; without this the hub sits at the world origin, which
+  // is the exact centre of the frame at every scale, so it can never be
+  // cropped out and the organism can never read as several separate forms.
+  // Drawn HERE — before anything weight-dependent — so form-count continuity
+  // is unaffected.
+  const offTh = rng() * Math.PI * 2;
+  const offR = 0.25 + rng() * 0.45;
+  const offset = [Math.cos(offTh) * offR, Math.sin(offTh) * offR];
+
   const raw = Array.from({ length: MAX_FORMS }, () => ({
     jitter: rng() * 2 - 1,
     len: rng(),
@@ -135,7 +146,8 @@ export function layout(seed, controls) {
   }));
   const warpP = warpParams(rng);
 
-  const hub = { ax: 0, ay: 0, ra: hubR, bx: 0, by: 0, rb: hubR, weight: 1 };
+  const hub = { ax: offset[0], ay: offset[1], ra: hubR,
+                bx: offset[0], by: offset[1], rb: hubR, weight: 1 };
 
   // How many arms are active. formCount 0 -> 3 arms, 1 -> MAX_FORMS.
   const active = 3 + c.formCount * (MAX_FORMS - 3);
@@ -157,18 +169,21 @@ export function layout(seed, controls) {
     // popping. Arms are ordered, so arm i activates as `active` passes i+1.
     const weight = Math.max(0, Math.min(1, active - i));
 
+    // Translated by `offset` so the whole organism moves rigidly with the
+    // hub — arms keep their positions relative to it rather than the offset
+    // deforming the mark.
     return {
-      ax: Math.cos(th) * rootD,
-      ay: Math.sin(th) * rootD,
+      ax: Math.cos(th) * rootD + offset[0],
+      ay: Math.sin(th) * rootD + offset[1],
       ra: rootR,
-      bx: Math.cos(th) * (rootD + len),
-      by: Math.sin(th) * (rootD + len),
+      bx: Math.cos(th) * (rootD + len) + offset[0],
+      by: Math.sin(th) * (rootD + len) + offset[1],
       rb: tipR,
       weight,
     };
   });
 
-  return { prims: [hub, ...arms], warpP };
+  return { prims: [hub, ...arms], warpP, offset };
 }
 
 // Below this weight an arm is gone entirely. Scaling radii to zero is not

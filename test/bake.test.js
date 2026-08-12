@@ -385,8 +385,13 @@ test('cleanup actually removes specks and pinholes', () => {
 });
 
 test('bake sample is negative inside the form and positive far outside', () => {
+  // The hub no longer sits at the world origin now that layout() offsets the
+  // organism (Task 3c), so probe its actual centre rather than (0, 0).
   const b = baked();
-  assert.ok(b.sample(0, 0) < 0, 'hub should be inside');
+  const { prims, controls } = makeBlobField(42, defaultControls());
+  const hub = prims[0];
+  const s = controls.scaleCrop;
+  assert.ok(b.sample(hub.ax * s, hub.ay * s) < 0, 'hub should be inside');
   assert.ok(b.sample(50, 50) > 0, 'far outside the grid must read as outside');
 });
 
