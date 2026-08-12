@@ -321,3 +321,37 @@ test('seedFor is stable for the same sound and steps with variation', () => {
   assert.notEqual(seedFor(feat(), 0), seedFor(feat(), 1));
   assert.notEqual(seedFor(feat(), 0), seedFor(feat({ pitchNorm: 0.8 }), 0));
 });
+
+test('scaleCrop resolves to a finite multiplier at or above its floor, uncapped at 1, and tracks rms', () => {
+  const allZero = { pitchNorm: 0, rms: 0, centroid: 0, spread: 0, pitchConf: 0 };
+  const allOne = { pitchNorm: 1, rms: 1, centroid: 1, spread: 1, pitchConf: 1 };
+  for (const f of [allZero, allOne, {}]) {
+    const v = resolveControls({}, f).scaleCrop;
+    assert.ok(Number.isFinite(v), `scaleCrop is ${v} for features ${JSON.stringify(f)}`);
+    assert.ok(v >= 0.5, `scaleCrop ${v} below the 0.5 floor`);
+  }
+  // rms is the only feature scaleCrop's audio target derives from. A loud
+  // sound must push the resolved multiplier up, and specifically past 1 --
+  // clamping to [0,1] would erase the entire point of the control, which is
+  // to overflow the frame.
+  const loud = resolveControls({}, allOne).scaleCrop;
+  const quiet = resolveControls({}, allZero).scaleCrop;
+  assert.ok(loud > quiet, `scaleCrop should track rms: loud=${loud} quiet=${quiet}`);
+  assert.ok(loud > 1, `scaleCrop ${loud} never exceeds 1`);
+});
+
+test('depth-zero controls ignore the sound entirely', () => {
+  // simplify, edgeSoftness and invert are pure art direction (DEPTH 0, or a
+  // hard pass-through for invert). Whatever the sound is, resolveControls
+  // must return exactly the slider value for these three -- never the
+  // default, and never anything nudged by audio.
+  const allZero = { pitchNorm: 0, rms: 0, centroid: 0, spread: 0, pitchConf: 0 };
+  const allOne = { pitchNorm: 1, rms: 1, centroid: 1, spread: 1, pitchConf: 1 };
+  for (const [k, sliderValue] of [['simplify', 0.73], ['edgeSoftness', 0.82], ['invert', 1]]) {
+    const sliders = { [k]: sliderValue };
+    const a = resolveControls(sliders, allZero)[k];
+    const b = resolveControls(sliders, allOne)[k];
+    assert.equal(a, sliderValue, `${k} at silence should equal the slider, got ${a}`);
+    assert.equal(b, sliderValue, `${k} at full-loud sound should equal the slider, got ${b}`);
+  }
+});
