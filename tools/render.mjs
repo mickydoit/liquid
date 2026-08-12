@@ -45,10 +45,18 @@ export const SCENARIOS = {
   //    cropping yields separate pieces or one continuous wedge is fixed by each
   //    seed's arm-angle draw, not reachable by any control. Edge coverage is
   //    what this scenario asserts instead.
+  //
+  //    `edges: 2`, not 3. Requiring three edges forced the crop so far in that
+  //    the frame filled with solid black and no form language survived — every
+  //    seed landed at ink 0.37-0.59 and read as an abstract corner rather than
+  //    cropped forms. The reference posters mostly show forms entering from
+  //    TWO edges. `ink` is also bounded tightly here rather than by the loose
+  //    shared 0.08-0.85 guard, because "strong negative space" has to be
+  //    enforced, not merely permitted.
   large: {
-    formCount: 0.9, stretch: 0.75, merge: 0.15, simplify: 0.65,
-    warp: 0.25, symmetry: 0.15, scaleCrop: 2.30, detail: 0,
-    expect: { edges: 3, maxBboxFill: 0.80 },
+    formCount: 0.1, stretch: 0.60, merge: 0.20, simplify: 0.75,
+    warp: 0.25, symmetry: 0.15, scaleCrop: 1.60, detail: 0,
+    expect: { edges: 2, maxBboxFill: 0.62, ink: [0.15, 0.35] },
   },
   // 2. The complete-mark case. One connected organism, five to seven arms,
   //    entirely inside the frame (scaleCrop below 1).

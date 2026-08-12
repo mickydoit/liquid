@@ -58,10 +58,15 @@ for (const name of Object.keys(SCENARIOS)) {
   });
 
   test(`${name}: ink covers a substantial area`, () => {
+    // The shared 0.08-0.85 range is a sanity guard. A scenario may narrow it
+    // via `expect.ink`, and one does: without a tight upper bound, "cropped"
+    // degenerates into "the frame is mostly solid", which passes every other
+    // check while destroying the negative space the whole look depends on.
+    const [lo, hi] = SCENARIOS[name].expect.ink ?? [0.08, 0.85];
     for (const seed of SEEDS) {
       const b = bakeScenario(name, seed);
       const ink = b.mask.reduce((s, v) => s + v, 0) / (b.w * b.h);
-      assert.ok(ink > 0.08 && ink < 0.85, `${name}/${seed}: ink ${ink}`);
+      assert.ok(ink > lo && ink < hi, `${name}/${seed}: ink ${ink.toFixed(3)}, want ${lo}-${hi}`);
     }
   });
 
