@@ -87,6 +87,20 @@ mid-Form blur, because a half-and-half mask has no sharp transition to find.
 existing Form values mean; 0.40 today becomes 0.20. No code path persists a
 design to disk, so the cost is re-finding slider positions by eye.
 
+### The plate mask
+
+`nodalThickness` ends with a soft circular dish edge,
+`T *= 1 - smoothstep(1.02, 1.30, r)`. A Chladni figure lives on a physical
+plate and must end at its rim. The organism does not — the reference posters
+run edge to edge on all four sides, and with the dish edge always applied the
+organism is trapped in a disc and the look is unreachable at any slider
+setting.
+
+So the plate mask is **released linearly across Form 0.5 -> 1.0**, on both the
+CPU and GPU paths. Below the hinge it is untouched.
+
+(Added 2026-08-13 during planning; missing from the first draft of this spec.)
+
 ### Components
 
 ```
