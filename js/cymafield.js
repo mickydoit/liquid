@@ -34,6 +34,10 @@ export function idleState() {
     amp: 0,            // drives how much water is gathered into the pattern
     fine: 0,           // fine ripple detail (spectral centroid)
     chaos: 0,          // layering / instability (noisy input)
+    simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
+    swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
+    mass: 0,           // 0 = water on the NODES (a web), 1 = on the ANTINODES (islands)
+    form: 0,           // 0 = cymatic field, 1 = a metaball blob of fused lobes
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -46,15 +50,33 @@ export function idleState() {
   };
 }
 
+// How much of the modal order survives. Complexity in a Chladni figure IS
+// its mode numbers — a high-order plate has many small cells — so the way to
+// simplify is to lower the orders, not to blur or hide anything. Floors keep
+// a recognisable figure at the simple end instead of collapsing to a blob.
+export function orders(s) {
+  // Reaches much further down than before; the floors are what keep a blobby
+  // metaball character at the extreme rather than collapsing to a plain disc.
+  const det = 1 - 0.86 * (s.simple ?? 0);
+  return {
+    m: Math.max(0.55, s.m * det),
+    n: Math.max(0.45, s.n * det),
+    kr: Math.max(1.3, s.kr * det),
+    ma: Math.max(0.7, s.ma * det),
+    det,
+  };
+}
+
 // Modal superposition. Continuous in every parameter so the topology can
 // morph rather than switch.
 export function psi(x, y, s) {
+  const o = orders(s);
   // Square plate (classic Chladni): the antisymmetric combination is what
   // gives the familiar crosses, lattices and stars. A single cos*cos product
   // only ever yields a plain grid.
   const u = x * 0.5 + 0.5, v = y * 0.5 + 0.5;
-  const sq = Math.cos(s.m * PI * u) * Math.cos(s.n * PI * v)
-           - Math.cos(s.n * PI * u) * Math.cos(s.m * PI * v);
+  const sq = Math.cos(o.m * PI * u) * Math.cos(o.n * PI * v)
+           - Math.cos(o.n * PI * u) * Math.cos(o.m * PI * v);
 
   // Circular membrane. A true Bessel J_m is far too costly per pixel; its
   // ring structure is captured by a decaying cosine, which is all the
@@ -65,28 +87,30 @@ export function psi(x, y, s) {
   // theta = +-pi draws a hard seam straight across the figure. cos(ma*th) is
   // only periodic for integer ma — and ma has to stay continuous so the
   // angular order can morph — so blend the two neighbouring integer orders.
-  const m0 = Math.floor(s.ma), fm = s.ma - m0;
+  const m0 = Math.floor(o.ma), fm = o.ma - m0;
   const ang = Math.cos(m0 * th + s.phase) * (1 - fm)
             + Math.cos((m0 + 1) * th + s.phase) * fm;
-  const rad = Math.cos(s.kr * r - s.ma * PI * 0.5 - PI * 0.25)
-            / Math.sqrt(1 + s.kr * r * 0.6) * ang;
+  const rad = Math.cos(o.kr * r - o.ma * PI * 0.5 - PI * 0.25)
+            / Math.sqrt(1 + o.kr * r * 0.6) * ang;
 
   let f = sq * (1 - s.mix) + rad * s.mix * 1.7;
 
   // Fine structure from brightness — a higher-order mode laid over the
   // fundamental, drifting slowly so the surface never looks frozen.
+  // Fine detail and layering are both forms of complexity, so they fade with
+  // the same control — otherwise "simple" would still carry busy overlays.
   if (s.fine > 0) {
-    f += s.fine * 0.30
-       * Math.cos(s.m * 2.7 * PI * u + s.t * 0.21)
-       * Math.cos(s.n * 2.7 * PI * v - s.t * 0.17);
+    f += s.fine * 0.30 * o.det
+       * Math.cos(o.m * 2.7 * PI * u + s.t * 0.21)
+       * Math.cos(o.n * 2.7 * PI * v - s.t * 0.17);
   }
 
   // Noisy input layers a second, detuned mode over the first, so broadband
   // sound reads as an unstable / doubled figure instead of a clean one.
   if (s.chaos > 0) {
-    f += s.chaos * 0.45
-       * (Math.cos((s.m + 1.7) * PI * u) * Math.cos((s.n + 0.6) * PI * v)
-        - Math.cos((s.n + 0.6) * PI * u) * Math.cos((s.m + 1.7) * PI * v));
+    f += s.chaos * 0.45 * o.det
+       * (Math.cos((o.m + 1.7) * PI * u) * Math.cos((o.n + 0.6) * PI * v)
+        - Math.cos((o.n + 0.6) * PI * u) * Math.cos((o.m + 1.7) * PI * v));
   }
 
   // A transient sends a ring travelling outward, decaying in time and radius.
@@ -105,10 +129,57 @@ export function psi(x, y, s) {
 // thickness is high where |Psi| is small. The band widens with amplitude:
 // louder sound sweeps liquid out of a larger area and into the figure, which
 // is exactly the "water flows into the pattern" behaviour.
+// How much the ribbon swells at a given point.
+//
+// A low-order standing wave from the SAME modal family as the figure, so the
+// thick and thin passages belong to the form rather than looking like an
+// effect laid over it. Deliberately not the true field gradient: that is the
+// physically exact choice, but it costs two extra psi evaluations inside a
+// function already called ~8x per pixel, which triples the per-pixel trig
+// budget for a difference the eye does not read.
+export function swellAt(x, y, s) {
+  const o = orders(s);
+  const u = x * 0.5 + 0.5, v = y * 0.5 + 0.5;
+  // Low frequencies relative to the figure: a few broad passages that swell
+  // and pinch, rather than many small wobbles along every ribbon.
+  return 0.5 + 0.5 * Math.cos(o.m * 0.32 * PI * u + s.phase * 0.7)
+                   * Math.cos(o.n * 0.27 * PI * v - s.phase * 0.5);
+}
+
 export function nodalThickness(x, y, s) {
   const f = Math.abs(psi(x, y, s));
-  const band = 0.05 + 0.34 * s.amp;
-  let T = 1 - smoothstep(band * 0.30, band, f);
+  // The band is a threshold on the FIELD, not a width in space. Lowering the
+  // modal orders makes the field's gradients gentler, so the same threshold
+  // spreads over far more area — simplifying without this turns the figure
+  // into a solid mass with a few holes, the inverse of the intended look.
+  // Scaling with the same factor keeps the ribbon's width roughly fixed while
+  // the cells grow, which is what gives broad meanders instead of a blob.
+  const sw = s.swell ? swellAt(x, y, s) : 0;
+  const weight = 1 + (s.swell ?? 0) * (0.15 + 2.6 * sw - 1);
+  const band = (0.05 + 0.34 * s.amp) * orders(s).det * weight;
+
+  // WHICH SIDE of the field holds the water.
+  //
+  // On the NODES (mass = 0) the wet set is a nodal line network — always a
+  // web of closed loops, because that is what a nodal set is. No amount of
+  // simplifying turns it into a few solid lobes.
+  //
+  // On the ANTINODES (mass = 1) the wet set is the field's peaks instead:
+  // a handful of fat rounded masses joined by necks. That is the metaball
+  // topology, and it is the only way to reach it from a modal field.
+  const line = 1 - smoothstep(band * 0.30, band, f);
+  const thr = (0.62 - 0.42 * s.amp) / Math.max(0.3, weight);
+  const soft = 0.10 * (s.simple ? 1 + s.simple : 1);
+  const lobe = smoothstep(thr - soft, thr + soft, f);
+  let T = (1 - (s.mass ?? 0)) * line + (s.mass ?? 0) * lobe;
+  // Cross-fade to the metaball form. At form = 1 the shape is pure blob; in
+  // between, the cymatic figure still reads through it.
+  if (s.form) {
+    // smoothstep, not linear: a linear blend leaves a ghost web behind the
+    // blob at Form 0.85-0.95.
+    const w = smoothstep(0, 1, s.form);
+    T = T * (1 - w) + blobThickness(x, y, s) * w;
+  }
   // Soft plate boundary — the dish edge, not a hard crop.
   const r = Math.sqrt(x * x + y * y);
   T *= 1 - smoothstep(1.02, 1.30, r);
@@ -132,6 +203,54 @@ export function reveal(x, y, s) {
 // exactly and the vector export needs no exceptions.
 export function thickness(x, y, s) {
   return clamp01(nodalThickness(x, y, s) * reveal(x, y, s));
+}
+
+// ── metaball form ──────────────────────────────────────────────────────
+//
+// A modal field can only give two topologies: water on the nodes is a web of
+// closed loops, water on the antinodes is a field of islands (one peak per
+// cell). Neither is a single fat multi-armed blob, however far it is
+// simplified — that shape is a metaball, a different construction entirely.
+//
+// So the blob is built directly, from the SAME modal numbers that drive the
+// field, and cross-faded with it. The lobe count, placement and size all
+// follow m, n, ma and amplitude, so it still answers to the sound.
+export const BLOB_MAX = 10;
+
+export function blobCircles(s) {
+  const o = orders(s);
+  const k = Math.max(3, Math.min(BLOB_MAX - 1, Math.round(3 + o.ma * 0.6)));
+  const out = [];
+  for (let i = 0; i < k; i++) {
+    const a = (i / k) * Math.PI * 2 + s.phase;
+    // Spacing vs radius is what decides arms-with-necks against one fused
+    // mass: the lobes have to stand clear of each other and be bridged, not
+    // overlap outright.
+    const dist = 0.46 + 0.13 * Math.sin(o.m * 1.7 + i * 2.3);
+    const rad = 0.19 + 0.07 * Math.sin(o.n * 2.1 + i * 1.7) + 0.08 * s.amp;
+    out.push({ x: Math.cos(a) * dist, y: Math.sin(a) * dist, r: Math.max(0.08, rad) });
+  }
+  // A centre lobe ties the arms into one body instead of a ring of islands.
+  out.push({ x: 0, y: 0, r: 0.16 + 0.10 * s.amp });
+  return out;
+}
+
+// Polynomial smooth minimum: blending circle SDFs with this rather than a
+// hard min is what produces the tapered necks between lobes.
+export function smin(a, b, k) {
+  if (k <= 0) return Math.min(a, b);
+  const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (b - a) / k));
+  return b * (1 - h) + a * h - k * h * (1 - h);
+}
+
+export function blobThickness(x, y, s) {
+  const cs = blobCircles(s);
+  const k = 0.15 + 0.08 * (1 - (s.simple ?? 0));
+  let d = Math.hypot(x - cs[0].x, y - cs[0].y) - cs[0].r;
+  for (let i = 1; i < cs.length; i++) {
+    d = smin(d, Math.hypot(x - cs[i].x, y - cs[i].y) - cs[i].r, k);
+  }
+  return 1 - smoothstep(-0.012, 0.012, d);
 }
 
 // ── audio → field ──────────────────────────────────────────────────────
@@ -199,7 +318,24 @@ export function kick(state, strength = 1) {
   return state;
 }
 
+// Where the water's edge sits, as a thickness value.
+//
+// ONE canonical number for three consumers that must agree: the shaded view's
+// coverage ramp, the flat view's silhouette, and the contour the vector
+// export traces. They had drifted — the export cut at 0.5 while the shaded
+// view painted everything above ~0.08 — so exports came out markedly thinner
+// than the screen, and any filament peaking below 0.5 vanished outright,
+// which is what fragmented the strokes.
+export const WATER_EDGE = 0.08;
+
+// Centreline field for the OUTLINE export: zero along the nodal line, which
+// is the ribbon's spine. Contouring the water's boundary instead draws both
+// sides of every ribbon, so each curve comes out doubled.
+export function makeCentrelineField(s) {
+  return (x, y) => (thickness(x, y, s) > 0.12 ? psi(x, y, s) : 1);
+}
+
 // Signed field for contouring: negative inside the water.
-export function makeWaterField(s, iso = 0.5) {
+export function makeWaterField(s, iso = WATER_EDGE) {
   return (x, y) => iso - thickness(x, y, s);
 }

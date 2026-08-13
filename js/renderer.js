@@ -1,5 +1,5 @@
 import { VERT, FRAG } from './shader.js';
-import { stepGrow } from './cymafield.js';
+import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -10,7 +10,9 @@ import { stepGrow } from './cymafield.js';
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
-  'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uFlat', 'uTransparent',
+  'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
+  'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass', 'uForm', 'uBlob', 'uBlobN', 'uBlobK',
+  'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
 ];
 
@@ -77,7 +79,8 @@ export class LiquidRenderer {
     this._dirty = true;
 
     this.style = {
-      gloss: 1, dispersion: 1, flat: false, transparent: false,
+      gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
+      view: 0, lineW: 0.012, transparent: false,
       ground: [0.68, 0.73, 0.78], ink: [0.07, 0.09, 0.11], deep: [0.49, 0.59, 0.69],
     };
 
@@ -106,6 +109,27 @@ export class LiquidRenderer {
   }
 
   setStyle(patch) { Object.assign(this.style, patch); this._dirty = true; }
+
+  // A backdrop the water refracts. Without one there is nothing behind the
+  // liquid to bend, so refraction is invisible no matter how strong — which
+  // is the whole reason the reference reads as glass over type.
+  setBackdrop(img) {
+    const gl = this.gl;
+    if (this._backTex) { gl.deleteTexture(this._backTex); this._backTex = null; }
+    if (img) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      // NPOT-safe: clamp + linear, no mipmaps.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this._backTex = t;
+    }
+    this._dirty = true;
+  }
   setFrameSink(fn) { this._frameSink = fn; }
 
   // `useInset` is false for exports: the chrome offset exists to dodge the
@@ -122,6 +146,36 @@ export class LiquidRenderer {
     gl.uniform1f(u.uRipAmt, s.ripAmt); gl.uniform1f(u.uRipT, s.ripT);
     gl.uniform1f(u.uMatTime, this._matTime);
     gl.uniform1f(u.uGrow, s.grow ?? 1);
+    // Simplicity is GEOMETRY, so it lives on the state the exporter reads.
+    gl.uniform1f(u.uSimple, s.simple ?? 0);
+    gl.uniform1f(u.uSwell, s.swell ?? 0);
+    gl.uniform1f(u.uMass, s.mass ?? 0);
+    gl.uniform1f(u.uForm, s.form ?? 0);
+    // Only rebuild the circles when the form is actually in play.
+    if (s.form > 0) {
+      const cs = blobCircles(s);
+      const arr = this._blobArr || (this._blobArr = new Float32Array(BLOB_MAX * 3));
+      arr.fill(0);
+      const n = Math.min(cs.length, BLOB_MAX);
+      for (let i = 0; i < n; i++) {
+        arr[i * 3] = cs[i].x; arr[i * 3 + 1] = cs[i].y; arr[i * 3 + 2] = cs[i].r;
+      }
+      gl.uniform3fv(u.uBlob, arr);
+      gl.uniform1i(u.uBlobN, n);
+      gl.uniform1f(u.uBlobK, 0.15 + 0.08 * (1 - (s.simple ?? 0)));
+    } else {
+      gl.uniform1i(u.uBlobN, 1);
+      gl.uniform1f(u.uBlobK, 0.2);
+    }
+    gl.uniform1f(u.uHasBack, this._backTex ? 1 : 0);
+    if (this._backTex) {
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._backTex);
+      gl.uniform1i(u.uBackTex, 0);
+    }
+    gl.uniform1f(u.uRim, st.rim);
+    gl.uniform1f(u.uDepth, st.depth);
+    gl.uniform1f(u.uRefract, st.refract);
     gl.uniform1f(u.uAspect, aspect);
     gl.uniform1f(u.uZoom, this.zoom * (useInset ? this.insetZoom : 1));
     gl.uniform2fv(u.uPan, useInset
@@ -129,7 +183,8 @@ export class LiquidRenderer {
       : this.pan);
     gl.uniform1f(u.uGloss, st.gloss);
     gl.uniform1f(u.uDispersion, st.dispersion);
-    gl.uniform1f(u.uFlat, st.flat ? 1 : 0);
+    gl.uniform1f(u.uView, st.view);
+    gl.uniform1f(u.uLineW, st.lineW);
     gl.uniform1f(u.uTransparent, st.transparent ? 1 : 0);
     gl.uniform3fv(u.uGround, st.ground);
     gl.uniform3fv(u.uInk, st.ink);

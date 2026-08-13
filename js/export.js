@@ -1,5 +1,5 @@
 import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js';
-import { makeWaterField } from './cymafield.js';
+import { makeWaterField, makeCentrelineField } from './cymafield.js';
 
 // Vector export.
 //
@@ -19,7 +19,12 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
   // output would silently ignore the user's framing. margin 0 because the
   // view is already the exact frame.
   const opts = bounds ? { width, height, bounds, margin: 0 } : { width, height };
-  const { rings } = fieldOutline(makeWaterField(state), opts);
+  // The outline traces the CENTRELINE, matching the on-screen outline view —
+  // tracing the water's boundary draws both sides of every ribbon and every
+  // curve arrives doubled. A blob has no spine, so it keeps its boundary.
+  const field = (variant === 'outline' && (state.form ?? 0) < 0.5)
+    ? makeCentrelineField(state) : makeWaterField(state);
+  const { rings } = fieldOutline(field, opts);
   const paths = rings.map((r, i) =>
     `    <path id="pool-${String(i + 1).padStart(3, '0')}" d="${ringToPath(r)}"/>`);
 
@@ -42,7 +47,9 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
 export function exportPDF({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
   const { jsPDF } = window.jspdf;
   const opts = bounds ? { width, height, bounds, margin: 0 } : { width, height };
-  const { rings } = fieldOutline(makeWaterField(state), opts);
+  const field = (variant === 'outline' && (state.form ?? 0) < 0.5)
+    ? makeCentrelineField(state) : makeWaterField(state);
+  const { rings } = fieldOutline(field, opts);
   const mmW = width > height ? 297 : 210;
   const mmH = mmW * (height / width);
   const doc = new jsPDF({

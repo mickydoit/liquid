@@ -61,6 +61,48 @@ water moves, at the Motion rate.
 there is also a Scale slider. The vector export follows the on-screen framing,
 so a zoomed SVG matches what you see.
 
+## Controls
+
+**Water** — Gloss, Dispersion, Rim, Depth, Refraction shape the material.
+Near-black interiors with a crisp bright edge (high Depth + high Rim) give the
+glassy look; Refraction is how hard the ground bends, separately from how much
+that bending splits into colour.
+
+**Flow** sets how much water is gathered into the figure — i.e. ribbon weight.
+**Simplicity** lowers the modal orders, trading a dense nodal lattice for a few
+broad meanders. Complexity in a Chladni figure *is* its mode numbers, so this
+lowers them rather than blurring or hiding anything; the band width scales with
+them, or gentler gradients would spread the same threshold into a solid mass.
+
+**View** switches between the shaded water, the filled silhouette and an
+outline-only stroke — the latter two are exactly what Flat SVG and Outline SVG
+emit, so you can see the export before making it. **Line weight** sets the
+outline's stroke.
+
+**Backdrop image** (Colour section) puts a picture behind the water, which the
+liquid then refracts — that is what makes it bend type sitting behind it. With
+no backdrop there is nothing to bend, so refraction is invisible however high
+you push it.
+
+**Form** cross-fades from the cymatic field to a metaball blob. This exists
+because a modal field only has two topologies available: water on the nodes is
+a web of closed loops, water on the antinodes is a field of islands (one peak
+per cell). Neither is a single fat multi-armed blob however far it is
+simplified — that shape is a metaball, a different construction. So the blob
+is built directly from the same modal numbers and blended in; part-way, the
+cymatic figure still reads through it.
+
+**Mass** moves the water between the nodes and the antinodes.
+
+**Swell** varies the line weight across the figure — broad passages tapering
+to fine strands — by modulating the band with a low-order standing wave from
+the same modal family, so the thick and thin parts belong to the form rather
+than looking applied.
+
+Flow, Simplicity and Swell are all geometry, so they land on the exported
+vectors too. Gloss, Dispersion, Rim, Depth and Refraction are material, so
+they affect the screen and PNG but not the vector outlines.
+
 ## Audio mapping
 
 | feature | drives |

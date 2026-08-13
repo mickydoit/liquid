@@ -18,7 +18,8 @@ let recordStart = 0;
 let design = null;          // the submitted, static field state
 
 const params = {
-  gloss: 1, dispersion: 1, flow: 0.35, flat: false,
+  gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
+  flow: 0.35, simple: 0, swell: 0, mass: 0, form: 0, view: 0, lineW: 0.012,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -48,6 +49,10 @@ function stateFromFingerprint(fp) {
   s.amp = Math.min(1, Math.max(s.amp, params.flow * 1.6));
   // Start empty and flood in, so a submitted design arrives rather than
   // appearing whole.
+  s.simple = params.simple;
+  s.swell = params.swell;
+  s.mass = params.mass;
+  s.form = params.form;
   s.grow = 0;
   s.growTarget = 1;
   return s;
@@ -57,7 +62,11 @@ function applyStyle() {
   renderer.setStyle({
     gloss: params.gloss,
     dispersion: params.dispersion,
-    flat: params.flat,
+    rim: params.rim,
+    depth: params.depth,
+    refract: params.refract,
+    view: params.view,
+    lineW: params.lineW,
     transparent: params.transparent,
     ground: hex(params.ground),
     ink: hex(params.ink),
@@ -141,6 +150,10 @@ async function toggleLive() {
               : 'Live — holding · shimmering');
     },
   });
+  conductor.field.simple = params.simple;
+  conductor.field.swell = params.swell;
+  conductor.field.mass = params.mass;
+  conductor.field.form = params.form;
   renderer.materialRate = 1;
   conductor.start();
   mode = 'live';
@@ -265,7 +278,9 @@ window.addEventListener('DOMContentLoaded', () => {
     if (recorder) recorder.discard(); showButtons(); setStatus('Video discarded');
   });
 
-  for (const [id, key, scale] of [['sl-gloss', 'gloss', 1], ['sl-dispersion', 'dispersion', 1]]) {
+  for (const [id, key, scale] of [['sl-gloss', 'gloss', 1], ['sl-dispersion', 'dispersion', 1],
+                                  ['sl-rim', 'rim', 1], ['sl-depth', 'depth', 1],
+                                  ['sl-refract', 'refract', 1]]) {
     $(id).addEventListener('input', (e) => {
       params[key] = parseFloat(e.target.value) * scale;
       applyStyle();
@@ -281,6 +296,35 @@ window.addEventListener('DOMContentLoaded', () => {
       renderer.setField(s, 'material');
     }
   });
+  // Simplicity is GEOMETRY, not style: it lowers the modal orders, so it has
+  // to land on the state the vector export reads or a simplified design would
+  // export at full complexity.
+  $('sl-simple').addEventListener('input', (e) => {
+    params.simple = parseFloat(e.target.value);
+    if (conductor) conductor.field.simple = params.simple;
+    const s = currentState();
+    if (s) { s.simple = params.simple; renderer._dirty = true; }
+  });
+  // Swell is GEOMETRY too — it changes the band width per point, so it has to
+  // reach the state the exporter reads.
+  $('sl-swell').addEventListener('input', (e) => {
+    params.swell = parseFloat(e.target.value);
+    if (conductor) conductor.field.swell = params.swell;
+    const s = currentState();
+    if (s) { s.swell = params.swell; renderer._dirty = true; }
+  });
+  $('sl-mass').addEventListener('input', (e) => {
+    params.mass = parseFloat(e.target.value);
+    if (conductor) conductor.field.mass = params.mass;
+    const s = currentState();
+    if (s) { s.mass = params.mass; renderer._dirty = true; }
+  });
+  $('sl-form').addEventListener('input', (e) => {
+    params.form = parseFloat(e.target.value);
+    if (conductor) conductor.field.form = params.form;
+    const s = currentState();
+    if (s) { s.form = params.form; renderer._dirty = true; }
+  });
   $('sl-motion').addEventListener('input', (e) => {
     params.motion = parseFloat(e.target.value);
     if (mode !== 'live') renderer.materialRate = params.motion;
@@ -291,7 +335,24 @@ window.addEventListener('DOMContentLoaded', () => {
     renderer.resetView();
     $('sl-scale').value = 1;
   });
-  $('chk-flat').addEventListener('change', (e) => { params.flat = e.target.checked; applyStyle(); });
+  $('sel-view').addEventListener('change', (e) => {
+    params.view = parseFloat(e.target.value); applyStyle();
+  });
+  $('sl-linew').addEventListener('input', (e) => {
+    params.lineW = parseFloat(e.target.value); applyStyle();
+  });
+  $('lbl-backdrop').addEventListener('click', () => $('file-backdrop').click());
+  $('file-backdrop').addEventListener('change', (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const img = new Image();
+    img.onload = () => { renderer.setBackdrop(img); setStatus('Backdrop loaded — the water now refracts it'); };
+    img.onerror = () => setStatus('Could not read that image');
+    img.src = URL.createObjectURL(f);
+  });
+  $('btn-backdrop-clear').addEventListener('click', () => {
+    renderer.setBackdrop(null); $('file-backdrop').value = ''; setStatus('Backdrop removed');
+  });
   $('chk-transparent').addEventListener('change', (e) => { params.transparent = e.target.checked; });
   for (const [id, key] of [['col-ground', 'ground'], ['col-ink', 'ink'], ['col-deep', 'deep']]) {
     $(id).addEventListener('input', (e) => { params[key] = e.target.value; applyStyle(); });
