@@ -407,6 +407,60 @@ test('bake is deterministic', () => {
   assert.deepEqual([...baked().grid], [...baked().grid]);
 });
 
+test('sample covers the outermost row/column and the declared frame edges, not just their fictitious cell-centres', () => {
+  // A field that is inside EVERYWHERE. If sample's bounds check rejects a
+  // point that is genuinely inside the declared frame x in [-aspect, aspect],
+  // y in [-1, 1], this field proves it by returning FAR (positive) instead of
+  // negative.
+  //
+  // Two distinct defects this must catch:
+  //   1. Float boundary: at the outermost row/column's own cell centre, the
+  //      grid-coordinate arithmetic should land exactly on 0 or w-1/h-1, but
+  //      for most w/h it lands a few ULPs to the wrong side (e.g. the top row
+  //      at y = 1 - 1/h maps to gj ~= -4.8e-16, not 0). A bounds check of
+  //      `gj < 0` throws that cell out. This only shows up where w/h don't
+  //      divide evenly in double precision, so multiple `res` values are
+  //      required — a single res could pass by accident.
+  //   2. Half-cell dead band: the four declared frame boundaries themselves
+  //      (x = +-aspect, y = +-1) sit half a cell beyond the outermost cell
+  //      centre, so a bounds check keyed to the cell centre rejects them
+  //      unconditionally regardless of float error.
+  const insideEverywhere = () => -1;
+  for (const res of [256, 300, 400, 900]) {
+    for (const [name, aspect] of Object.entries(FORMATS)) {
+      const b = bake(insideEverywhere, { aspect, res, simplify: 0 });
+      const { w, h } = b;
+
+      // Outermost row/column cell centres, in world coordinates.
+      const xLeftCell = (-1 + 1 / w) * aspect;
+      const xRightCell = (1 - 1 / w) * aspect;
+      const yTopCell = 1 - 1 / h;
+      const yBottomCell = -1 + 1 / h;
+
+      const probes = {
+        'top row cell centre': [0, yTopCell],
+        'bottom row cell centre': [0, yBottomCell],
+        'left column cell centre': [xLeftCell, 0],
+        'right column cell centre': [xRightCell, 0],
+        'declared top edge': [0, 1],
+        'declared bottom edge': [0, -1],
+        'declared left edge': [-aspect, 0],
+        'declared right edge': [aspect, 0],
+      };
+      for (const [label, [x, y]] of Object.entries(probes)) {
+        assert.ok(
+          b.sample(x, y) < 0,
+          `${name} res=${res}: ${label} (${x}, ${y}) should read inside, got ${b.sample(x, y)}`
+        );
+      }
+
+      // A point genuinely far outside the frame must still read as FAR — the
+      // fix must not simply accept everything.
+      assert.equal(b.sample(50, 50), 10, `${name} res=${res}: far outside must still be FAR`);
+    }
+  }
+});
+
 test('bake output feeds fieldOutline without producing garbage rings', () => {
   const b = baked();
   const { rings } = fieldOutline((x, y) => b.sample(x, y), {

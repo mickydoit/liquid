@@ -236,10 +236,22 @@ export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 
     // World -> continuous grid coordinates.
     const gi = ((x / aspect + 1) / 2) * w - 0.5;
     const gj = ((1 - y) / 2) * h - 0.5;
-    if (gi < 0 || gj < 0 || gi > w - 1 || gj > h - 1) return FAR;
-    const i0 = Math.floor(gi), j0 = Math.floor(gj);
+    // Reject only points genuinely beyond the declared frame — more than one
+    // cell past the outermost row/column. The old check (`gi < 0 || gi > w - 1`,
+    // and the gj equivalent) rejected anything past the outermost row/column's
+    // fictitious cell-CENTRE, which is half a cell inside the declared frame
+    // edge (x = +-aspect, y = +-1) on every side, and which float error can
+    // push a point below even at an exact cell centre (e.g. the top row lands
+    // at gj ~= -4.8e-16 instead of 0 for most w/h). Clamping below, rather than
+    // rejecting, keeps every declared-frame point and every outermost-row/
+    // column point sampling its real nearest cell, while still calling
+    // anything actually outside that margin FAR.
+    if (gi < -1 || gj < -1 || gi > w || gj > h) return FAR;
+    const ci = gi < 0 ? 0 : gi > w - 1 ? w - 1 : gi;
+    const cj = gj < 0 ? 0 : gj > h - 1 ? h - 1 : gj;
+    const i0 = Math.floor(ci), j0 = Math.floor(cj);
     const i1 = Math.min(i0 + 1, w - 1), j1 = Math.min(j0 + 1, h - 1);
-    const fx = gi - i0, fy = gj - j0;
+    const fx = ci - i0, fy = cj - j0;
     const a = grid[j0 * w + i0], b = grid[j0 * w + i1];
     const c = grid[j1 * w + i0], d = grid[j1 * w + i1];
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
