@@ -138,7 +138,12 @@ float nodalAt(vec2 p) {
   // smoothstep, not linear: a linear blend leaves a visible ghost web
   // behind the blob at Form 0.85-0.95.
   T = mix(T, blobAt(p), smoothstep(0.0, 1.0, uForm));
-  return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
+  // The dish edge is released as Form crosses into the organism — see the
+  // matching comment in nodalThickness(). Without this the organism is trapped
+  // in a disc and cannot run off the frame.
+  float plate = 1.0 - smoothstep(1.02, 1.30, length(p));
+  float release = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
+  return T * mix(plate, 1.0, release);
 }
 
 // Emergence mask. The figure floods outward from the centre, so a design

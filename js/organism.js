@@ -4,8 +4,8 @@
 // when its inputs do.
 //
 // Knows nothing about WebGL. The renderer decides what to do with the grid.
-import { makeBlobField, defaultControls } from './blobfield.js?v=bd446fb6';
-import { bake, FORMATS } from './bake.js?v=bd446fb6';
+import { makeBlobField, defaultControls } from './blobfield.js?v=03176795';
+import { bake, FORMATS } from './bake.js?v=03176795';
 
 // Every control, in a fixed order, so the key is stable across objects that
 // happen to enumerate their properties in a different order.

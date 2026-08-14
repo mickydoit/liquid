@@ -258,3 +258,15 @@ test('without an organism the ramp falls back to the blob', () => {
   const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: null });
   assert.ok(nodalThickness(0, 0, s) > 0, 'still draws something');
 });
+
+test('the plate edge is gone at Form 1.0 so forms can run off frame', () => {
+  const BIG = { sample: (x, y) => Math.hypot(x, y) - 5 };   // covers the frame
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: BIG });
+  // Well outside the plate radius, but inside a portrait frame's corner.
+  assert.equal(nodalThickness(1.2, 0.9, s), 1, 'no dish edge at Form 1');
+});
+
+test('the plate edge still holds at Form 0', () => {
+  const s = Object.assign(idleState(), { form: 0, amp: 0.9 });
+  assert.equal(nodalThickness(1.6, 0, s), 0, 'dish edge intact for the field');
+});

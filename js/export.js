@@ -1,5 +1,5 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=bd446fb6';
-import { makeWaterField, makeCentrelineField } from './cymafield.js?v=bd446fb6';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=03176795';
+import { makeWaterField, makeCentrelineField } from './cymafield.js?v=03176795';
 
 // Vector export.
 //

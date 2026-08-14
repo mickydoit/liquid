@@ -202,8 +202,16 @@ export function nodalThickness(x, y, s) {
     }
   }
   // Soft plate boundary — the dish edge, not a hard crop.
+  //
+  // Released as Form crosses into the organism. A Chladni figure lives on a
+  // physical plate and must end at its rim, but the organism is a poster
+  // composition whose whole language is forms running off the frame. Holding
+  // the dish edge there would trap it in a disc and put the look out of reach
+  // at every slider setting.
   const r = Math.sqrt(x * x + y * y);
-  T *= 1 - smoothstep(1.02, 1.30, r);
+  const plate = 1 - smoothstep(1.02, 1.30, r);
+  const release = clamp01((form - 0.5) * 2);
+  T *= plate * (1 - release) + release;
   return T;
 }
 

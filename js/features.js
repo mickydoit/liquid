@@ -1,4 +1,4 @@
-import { fnv1a } from './hash.js?v=bd446fb6';
+import { fnv1a } from './hash.js?v=03176795';
 
 // Autocorrelation pitch detector (NAC). buf = time-domain Float32Array.
 export function detectPitch(buf, sampleRate) {
