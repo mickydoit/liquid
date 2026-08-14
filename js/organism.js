@@ -4,16 +4,16 @@
 // when its inputs do.
 //
 // Knows nothing about WebGL. The renderer decides what to do with the grid.
-import { makeBlobField, defaultControls } from './blobfield.js?v=2dd45290';
-import { bake, FORMATS } from './bake.js?v=2dd45290';
+import { makeBlobField, defaultControls } from './blobfield.js?v=d58a7cee';
+import { bake, FORMATS } from './bake.js?v=d58a7cee';
 
 // Every control, in a fixed order, so the key is stable across objects that
 // happen to enumerate their properties in a different order.
 const KEYS = Object.keys(defaultControls()).sort();
 
-const keyFor = (seed, controls, res) => {
+const keyFor = (seed, controls, res, aspect) => {
   const d = defaultControls();
-  return `${seed}|${res}|${KEYS.map((k) => (controls[k] ?? d[k]).toFixed(4)).join(',')}`;
+  return `${seed}|${res}|${aspect.toFixed(4)}|${KEYS.map((k) => (controls[k] ?? d[k]).toFixed(4)).join(',')}`;
 };
 
 export function makeOrganismCache() {
@@ -21,12 +21,17 @@ export function makeOrganismCache() {
   let lastVal = null;
   const api = {
     bakes: 0,
-    request(seed, controls, res) {
-      const key = keyFor(seed, controls, res);
+    // `aspect` must match the surface being drawn. Baking at a fixed portrait
+    // ratio and sampling it on a differently-shaped canvas letterboxes the
+    // organism, so the frame it was composed against is not the frame it is
+    // seen in — and the crop, which is the whole point of this look, lands in
+    // the wrong place.
+    request(seed, controls, res, aspect = FORMATS.portrait) {
+      const key = keyFor(seed, controls, res, aspect);
       if (key === lastKey) return lastVal;
       const { field } = makeBlobField(seed, controls);
       const b = bake(field, {
-        aspect: FORMATS.portrait,
+        aspect,
         res,
         simplify: controls.simplify ?? defaultControls().simplify,
       });

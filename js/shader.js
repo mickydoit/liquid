@@ -109,11 +109,23 @@ float blobAt(vec2 p) {
 // texture2D already returns 0-1 floats, so the JS side's /255 is applied for
 // us and this is (r + g/255) * 2*RANGE - RANGE with RANGE = 2.
 float organismDist(vec2 p) {
-  // The bake covers x in [-aspect, aspect] and y in [-1, 1].
+  // The bake covers x in [-aspect, aspect] and y in [-1, 1], but p spans
+  // +-3.15/2 down the viewport at zoom 1. Without this divide the organism
+  // would occupy the middle 63% of the frame and everything past it would be
+  // CLAMP_TO_EDGE smear — flat cuts where the form should keep going.
+  // Mirrors ORG_SPAN in js/cymafield.js.
+  vec2 q = p / 1.575;
   float a = uOrgSize.x / uOrgSize.y;
-  vec2 uv = vec2((p.x / a + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+  vec2 uv = vec2((q.x / a + 1.0) * 0.5, (1.0 - q.y) * 0.5);
+  // Past the bake, report "far outside" rather than sampling. CLAMP_TO_EDGE
+  // would repeat the outermost row and smear it across the rest of the view
+  // whenever the frame shows more world than the bake covers — which the
+  // chrome inset alone does, at zoom 0.52. bake()'s own sample() returns FAR
+  // here for the same reason; this keeps the GPU honest with the CPU.
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 10.0;
   vec4 t = texture2D(uOrganism, uv);
-  return (t.r + t.g / 255.0) * 4.0 - 2.0;
+  // Back to world units, since q was scaled down to reach the bake.
+  return ((t.r + t.g / 255.0) * 4.0 - 2.0) * 1.575;
 }
 
 float nodalAt(vec2 p) {
@@ -178,7 +190,13 @@ float nodalAt(vec2 p) {
 // At uGrow = 0 nothing is visible — that is the resting state now, instead of
 // a scatter of unrelated droplets sitting over the figure.
 float waterAt(vec2 p) {
+  // Released for the organism, exactly as the plate edge is — mirrors
+  // reveal() in js/cymafield.js. This is a fixed radius in WORLD units, but
+  // how much world is on screen depends on zoom, so no constant widening
+  // covers every zoom.
   float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
+  float revRelease = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
+  reveal = mix(reveal, 1.0, revRelease);
   return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }
 

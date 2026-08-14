@@ -194,7 +194,8 @@ export function nodalThickness(x, y, s) {
 
     if (form > 0.5 && s.organism) {
       const upper = smoothstep(0, 1, (form - 0.5) * 2);
-      const d = blobDist(x, y, s) * (1 - upper) + s.organism.sample(x, y) * upper;
+      const dOrg = s.organism.sample(x / ORG_SPAN, y / ORG_SPAN) * ORG_SPAN;
+      const d = blobDist(x, y, s) * (1 - upper) + dOrg * upper;
       // A fixed hairline: the CPU path has no screen to measure against, and
       // the exporter contours the zero crossing regardless, so this only
       // shapes antialiasing.
@@ -222,7 +223,19 @@ export function nodalThickness(x, y, s) {
 export function reveal(x, y, s) {
   const g = s.grow ?? 1;
   const r = Math.sqrt(x * x + y * y);
-  return 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
+  const rev = 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
+  // Released for the organism, exactly as the plate edge is.
+  //
+  // Widening it was tried first and does not work: this is a fixed radius in
+  // WORLD units, but how much world is on screen depends on zoom — the chrome
+  // inset alone puts it at 0.52, so the frame corner sits at r ~ 3.7 rather
+  // than the 1.89 it reaches at zoom 1. No constant covers every zoom.
+  //
+  // The cost is that a submitted organism appears whole instead of flooding
+  // in. That is the right trade: emergence is the plate metaphor, and the
+  // poster it becomes is a static composition.
+  const release = clamp01(((s.form ?? 0) - 0.5) * 2);
+  return rev * (1 - release) + release;
 }
 
 // Water thickness. Nodal structure only — there is no separate droplet layer:
@@ -233,6 +246,13 @@ export function reveal(x, y, s) {
 export function thickness(x, y, s) {
   return clamp01(nodalThickness(x, y, s) * reveal(x, y, s));
 }
+
+// The organism is baked over y in [-1, 1], but the shader's world coordinate
+// spans +-3.15/2 down the viewport at zoom 1 (see main() in js/shader.js). So
+// world coordinates are divided by this before sampling the bake, which is
+// what makes the organism exactly fill the frame at zoom 1 instead of
+// occupying its middle 63% with CLAMP_TO_EDGE smear beyond.
+export const ORG_SPAN = 1.575;
 
 // ── metaball form ──────────────────────────────────────────────────────
 //

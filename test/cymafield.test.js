@@ -188,7 +188,7 @@ test('grow settles exactly at its target, and drains back when it returns to 0',
 });
 
 // ── blob distance, split from its threshold ────────────────────────────
-import { blobDist, blobThickness } from '../js/cymafield.js';
+import { blobDist, blobThickness, ORG_SPAN } from '../js/cymafield.js';
 
 test('blobDist is negative inside a lobe and positive far outside', () => {
   const s = Object.assign(idleState(), { form: 1, amp: 0.5 });
@@ -212,7 +212,12 @@ test('blobThickness still agrees with the sign of blobDist', () => {
 // A stand-in organism: a disc of radius 0.5 at the origin, as a signed
 // distance. A known analytic shape keeps these tests about the RAMP rather
 // than about whatever blobfield happens to draw for a given seed.
+//
+// sample() is in BAKE coordinates, which nodalThickness reaches by dividing
+// world coordinates by ORG_SPAN — so in world terms this disc has radius
+// 0.5 * ORG_SPAN. discWorld is the expectation the ramp must reproduce.
 const DISC = { sample: (x, y) => Math.hypot(x, y) - 0.5 };
+const discWorld = (x, y) => Math.hypot(x, y) - 0.5 * ORG_SPAN;
 
 test('Form 1.0 is the pure organism, not the blob', () => {
   // Compared against the disc across a grid rather than at a couple of points:
@@ -222,7 +227,7 @@ test('Form 1.0 is the pure organism, not the blob', () => {
   for (let i = 0; i <= 20; i++) {
     for (let j = 0; j <= 20; j++) {
       const x = -1 + (2 * i) / 20, y = -1 + (2 * j) / 20;
-      const d = DISC.sample(x, y);
+      const d = discWorld(x, y);
       if (Math.abs(d) < 0.02) continue;          // skip the edge band
       assert.equal(nodalThickness(x, y, s), d < 0 ? 1 : 0, `at ${x},${y}`);
     }
