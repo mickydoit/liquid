@@ -1,10 +1,10 @@
-import { AudioEngine } from './audio.js?v=4dc9832e';
-import { buildFingerprint } from './features.js?v=4dc9832e';
-import { LiquidRenderer } from './renderer.js?v=4dc9832e';
-import { LiveConductor } from './live.js?v=4dc9832e';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=4dc9832e';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=4dc9832e';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=4dc9832e';
+import { AudioEngine } from './audio.js?v=bd446fb6';
+import { buildFingerprint } from './features.js?v=bd446fb6';
+import { LiquidRenderer } from './renderer.js?v=bd446fb6';
+import { LiveConductor } from './live.js?v=bd446fb6';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=bd446fb6';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=bd446fb6';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=bd446fb6';
 
 const audio = new AudioEngine();
 let renderer = null;

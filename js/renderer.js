@@ -1,5 +1,5 @@
-import { VERT, FRAG } from './shader.js?v=4dc9832e';
-import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=4dc9832e';
+import { VERT, FRAG } from './shader.js?v=bd446fb6';
+import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=bd446fb6';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //

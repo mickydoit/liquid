@@ -37,7 +37,10 @@ export function idleState() {
     simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
     swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
     mass: 0,           // 0 = water on the NODES (a web), 1 = on the ANTINODES (islands)
-    form: 0,           // 0 = cymatic field, 1 = a metaball blob of fused lobes
+    form: 0,           // 0 = cymatic field, 0.5 = metaball blob, 1 = organism
+    // The baked organism, as { sample(x, y) -> signed distance }, or null
+    // before the first bake lands. See js/organism.js.
+    organism: null,
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -172,13 +175,31 @@ export function nodalThickness(x, y, s) {
   const soft = 0.10 * (s.simple ? 1 + s.simple : 1);
   const lobe = smoothstep(thr - soft, thr + soft, f);
   let T = (1 - (s.mass ?? 0)) * line + (s.mass ?? 0) * lobe;
-  // Cross-fade to the metaball form. At form = 1 the shape is pure blob; in
-  // between, the cymatic figure still reads through it.
-  if (s.form) {
+  // The Form ramp, hinged at 0.5:
+  //
+  //   0.0 -> 0.5   cymatic field -> blob   (mask blend, as before)
+  //   0.5 -> 1.0   blob -> organism        (DISTANCE blend)
+  //
+  // The upper half blends signed distances and thresholds ONCE at the end.
+  // Blending two already-thresholded masks — which is what the lower half does
+  // — is exactly what makes mid-Form look blurred: a half-and-half mask has no
+  // sharp transition left to find. Distances have no such problem, so the
+  // organism half is crisp at every position.
+  const form = s.form ?? 0;
+  if (form) {
     // smoothstep, not linear: a linear blend leaves a ghost web behind the
     // blob at Form 0.85-0.95.
-    const w = smoothstep(0, 1, s.form);
+    const w = smoothstep(0, 1, Math.min(1, form * 2));
     T = T * (1 - w) + blobThickness(x, y, s) * w;
+
+    if (form > 0.5 && s.organism) {
+      const upper = smoothstep(0, 1, (form - 0.5) * 2);
+      const d = blobDist(x, y, s) * (1 - upper) + s.organism.sample(x, y) * upper;
+      // A fixed hairline: the CPU path has no screen to measure against, and
+      // the exporter contours the zero crossing regardless, so this only
+      // shapes antialiasing.
+      T = 1 - smoothstep(-0.004, 0.004, d);
+    }
   }
   // Soft plate boundary — the dish edge, not a hard crop.
   const r = Math.sqrt(x * x + y * y);

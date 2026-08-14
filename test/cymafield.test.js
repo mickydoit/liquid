@@ -206,3 +206,55 @@ test('blobThickness still agrees with the sign of blobDist', () => {
     if (d > 0.02) assert.equal(T, 0, `well outside at ${x},${y}`);
   }
 });
+
+// ── the Form ramp, hinged at 0.5 ───────────────────────────────────────
+
+// A stand-in organism: a disc of radius 0.5 at the origin, as a signed
+// distance. A known analytic shape keeps these tests about the RAMP rather
+// than about whatever blobfield happens to draw for a given seed.
+const DISC = { sample: (x, y) => Math.hypot(x, y) - 0.5 };
+
+test('Form 1.0 is the pure organism, not the blob', () => {
+  // Compared against the disc across a grid rather than at a couple of points:
+  // the blob happens to agree with the disc at the origin, so a spot check
+  // passes whether or not the organism is actually being used.
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: DISC });
+  for (let i = 0; i <= 20; i++) {
+    for (let j = 0; j <= 20; j++) {
+      const x = -1 + (2 * i) / 20, y = -1 + (2 * j) / 20;
+      const d = DISC.sample(x, y);
+      if (Math.abs(d) < 0.02) continue;          // skip the edge band
+      assert.equal(nodalThickness(x, y, s), d < 0 ? 1 : 0, `at ${x},${y}`);
+    }
+  }
+});
+
+test('the ramp is continuous across the 0.5 hinge', () => {
+  const at = (form) => {
+    const s = Object.assign(idleState(), { form, amp: 0.5, organism: DISC });
+    return nodalThickness(0.35, 0.1, s);
+  };
+  assert.ok(Math.abs(at(0.499) - at(0.501)) < 0.05, 'no jump at the hinge');
+});
+
+test('the upper half stays crisp', () => {
+  // The regression test for the mid-Form blur. Walk x across the disc edge and
+  // count samples that are neither fully in nor fully out. A distance-space
+  // blend keeps that band a few samples wide; a mask blend smears it.
+  for (const form of [0.6, 0.75, 0.9, 1.0]) {
+    const s = Object.assign(idleState(), { form, amp: 0.5, organism: DISC });
+    let soft = 0;
+    for (let i = 0; i <= 400; i++) {
+      const T = nodalThickness(-1 + (2 * i) / 400, 0, s);
+      if (T > 0.01 && T < 0.99) soft++;
+    }
+    assert.ok(soft <= 12, `Form ${form} had ${soft} soft samples, expected <= 12`);
+  }
+});
+
+test('without an organism the ramp falls back to the blob', () => {
+  // Before the first bake lands there is no organism; the design must hold the
+  // blob rather than vanish.
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: null });
+  assert.ok(nodalThickness(0, 0, s) > 0, 'still draws something');
+});
