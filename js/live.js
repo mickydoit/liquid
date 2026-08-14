@@ -1,4 +1,4 @@
-import { idleState, targetFromFeatures, glide, advance, kick } from './cymafield.js?v=03176795';
+import { idleState, targetFromFeatures, glide, advance, kick } from './cymafield.js?v=b92b5cf7';
 
 // Live conductor: audio frames in, field state out.
 //

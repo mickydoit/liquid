@@ -12,8 +12,8 @@
 //
 // Signed distance, NEGATIVE INSIDE, matching contour.js's convention.
 
-import { psi, idleState } from './cymafield.js?v=03176795';
-import { fnv1a } from './hash.js?v=03176795';
+import { psi, idleState } from './cymafield.js?v=b92b5cf7';
+import { fnv1a } from './hash.js?v=b92b5cf7';
 
 // Distance to the convex hull of circles (a, ra) and (b, rb).
 // Inigo Quilez's 2D rounded cone, with the two degenerate cases guarded.
