@@ -29,6 +29,10 @@ uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
 uniform float uHasBack;
+uniform sampler2D uOrganism;  // baked signed distance, 16-bit across R and G
+uniform vec2 uOrgSize;
+uniform float uHasOrganism;
+uniform float uPxWorld;       // one pixel, in world units
 uniform float uAspect, uZoom, uGloss, uDispersion, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
@@ -100,6 +104,18 @@ float blobAt(vec2 p) {
   return 1.0 - smoothstep(-0.012, 0.012, blobDist(p));
 }
 
+// The organism, sampled from its baked grid. The decode MIRRORS
+// unpackDistance() in js/sdftex.js — one format, split across two languages.
+// texture2D already returns 0-1 floats, so the JS side's /255 is applied for
+// us and this is (r + g/255) * 2*RANGE - RANGE with RANGE = 2.
+float organismDist(vec2 p) {
+  // The bake covers x in [-aspect, aspect] and y in [-1, 1].
+  float a = uOrgSize.x / uOrgSize.y;
+  vec2 uv = vec2((p.x / a + 1.0) * 0.5, (1.0 - p.y) * 0.5);
+  vec4 t = texture2D(uOrganism, uv);
+  return (t.r + t.g / 255.0) * 4.0 - 2.0;
+}
+
 float nodalAt(vec2 p) {
   float f = abs(psi(p));
 
@@ -137,7 +153,18 @@ float nodalAt(vec2 p) {
   // blended in. In between, the cymatic figure still reads through it.
   // smoothstep, not linear: a linear blend leaves a visible ghost web
   // behind the blob at Form 0.85-0.95.
-  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, uForm));
+  // The Form ramp, hinged at 0.5 — mirrors nodalThickness() in js/cymafield.js.
+  //   0.0 -> 0.5  cymatic field -> blob   (mask blend)
+  //   0.5 -> 1.0  blob -> organism        (DISTANCE blend, thresholded once)
+  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, min(1.0, uForm * 2.0)));
+
+  if (uForm > 0.5 && uHasOrganism > 0.5) {
+    float upper = smoothstep(0.0, 1.0, (uForm - 0.5) * 2.0);
+    float d = mix(blobDist(p), organismDist(p), upper);
+    // One pixel of transition, no more. This is what makes the upper half
+    // crisp where blending thresholded masks smears over tens of pixels.
+    T = 1.0 - smoothstep(-uPxWorld, uPxWorld, d);
+  }
   // The dish edge is released as Form crosses into the organism — see the
   // matching comment in nodalThickness(). Without this the organism is trapped
   // in a disc and cannot run off the frame.

@@ -1,6 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=b92b5cf7';
-import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=b92b5cf7';
-import { packSDF } from './sdftex.js?v=b92b5cf7';
+import { VERT, FRAG } from './shader.js?v=2dd45290';
+import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=2dd45290';
+import { packSDF } from './sdftex.js?v=2dd45290';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
