@@ -186,3 +186,23 @@ test('grow settles exactly at its target, and drains back when it returns to 0',
   for (let i = 0; i < 200; i++) stepGrow(s, 0.05);
   assert.equal(s.grow, 0, 'Clear must drain the figure back out');
 });
+
+// ── blob distance, split from its threshold ────────────────────────────
+import { blobDist, blobThickness } from '../js/cymafield.js';
+
+test('blobDist is negative inside a lobe and positive far outside', () => {
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5 });
+  // The centre lobe always exists, so the origin is inside.
+  assert.ok(blobDist(0, 0, s) < 0, 'origin should be inside');
+  assert.ok(blobDist(3, 3, s) > 0, 'far corner should be outside');
+});
+
+test('blobThickness still agrees with the sign of blobDist', () => {
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5 });
+  for (const [x, y] of [[0, 0], [0.5, 0.2], [1.5, 1.5], [-0.3, 0.7]]) {
+    const d = blobDist(x, y, s);
+    const T = blobThickness(x, y, s);
+    if (d < -0.02) assert.equal(T, 1, `deep inside at ${x},${y}`);
+    if (d > 0.02) assert.equal(T, 0, `well outside at ${x},${y}`);
+  }
+});

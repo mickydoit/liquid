@@ -85,13 +85,19 @@ float sminf(float a, float b, float k) {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-float blobAt(vec2 p) {
+// Split from its threshold so the Form ramp can blend distances rather than
+// masks — see blobDist() in js/cymafield.js for why that matters.
+float blobDist(vec2 p) {
   float d = length(p - uBlob[0].xy) - uBlob[0].z;
   for (int i = 1; i < 10; i++) {
     if (i >= uBlobN) break;
     d = sminf(d, length(p - uBlob[i].xy) - uBlob[i].z, uBlobK);
   }
-  return 1.0 - smoothstep(-0.012, 0.012, d);
+  return d;
+}
+
+float blobAt(vec2 p) {
+  return 1.0 - smoothstep(-0.012, 0.012, blobDist(p));
 }
 
 float nodalAt(vec2 p) {

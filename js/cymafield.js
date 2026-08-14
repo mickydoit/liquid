@@ -243,14 +243,22 @@ export function smin(a, b, k) {
   return b * (1 - h) + a * h - k * h * (1 - h);
 }
 
-export function blobThickness(x, y, s) {
+// The signed distance itself, kept separate from the threshold so the Form
+// ramp can blend it with the organism's distance BEFORE either is thresholded.
+// Blending two already-thresholded masks is what makes mid-Form look blurred:
+// a half-and-half mask has no sharp transition left to find.
+export function blobDist(x, y, s) {
   const cs = blobCircles(s);
   const k = 0.15 + 0.08 * (1 - (s.simple ?? 0));
   let d = Math.hypot(x - cs[0].x, y - cs[0].y) - cs[0].r;
   for (let i = 1; i < cs.length; i++) {
     d = smin(d, Math.hypot(x - cs[i].x, y - cs[i].y) - cs[i].r, k);
   }
-  return 1 - smoothstep(-0.012, 0.012, d);
+  return d;
+}
+
+export function blobThickness(x, y, s) {
+  return 1 - smoothstep(-0.012, 0.012, blobDist(x, y, s));
 }
 
 // ── audio → field ──────────────────────────────────────────────────────
