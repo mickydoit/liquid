@@ -21,17 +21,16 @@ uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
 uniform float uSimple, uRim, uDepth, uRefract, uSwell;
 uniform float uMass;        // 0 = water on the nodes, 1 = on the antinodes
-uniform float uForm;        // 0 = cymatic field, 1 = a metaball blob
-uniform vec3 uBlob[10];     // xy = centre, z = radius
-uniform int uBlobN;
-uniform float uBlobK;       // smooth-union blend radius
+uniform vec4 uMeta[14];     // xy = centre, zw = ellipse radii
+uniform vec2 uMetaRC[14];   // x = rotation, y = cluster id
+uniform int uMetaN;
+uniform float uMetaK;       // fillet radius for necks within a cluster
+uniform float uMetaScale;   // Scale/crop, a true zoom of the finished artwork
+uniform float uMode;        // 0 = Detailed Cymatic, 1 = Metaball Cymatic
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
 uniform float uHasBack;
-uniform sampler2D uOrganism;  // baked signed distance, 16-bit across R and G
-uniform vec2 uOrgSize;
-uniform float uHasOrganism;
 uniform float uPxWorld;       // one pixel, in world units
 uniform float uAspect, uZoom, uGloss, uDispersion, uTransparent;
 uniform vec2 uPan;
@@ -82,50 +81,60 @@ float psi(vec2 p) {
 // Water is driven off the antinodes and collects along the NODAL lines, so
 // thickness is high where |psi| is small. The band widens with amplitude:
 // louder sound sweeps liquid out of a larger area and into the figure.
-// Polynomial smooth minimum: blending circle SDFs with this rather than a
-// hard min is what produces the tapered necks between lobes.
+
+// ── Metaball Cymatic ───────────────────────────────────────────────────
+//
+// ⚠ MIRRORS js/metafield.js. Change them together.
+//
+// Circular FILLET union, not a polynomial smooth-min: a fillet cuts a concave
+// tangent arc in the corner where two surfaces meet, which is the hourglass
+// waist this look is built on. smin bulges convexly there and reads as soap
+// bubbles.
+// Approximate ellipse SDF. Exact for circles and close enough for the modest
+// ratios the generator allows; the exact form needs an iterative root solve.
+float sdEllipsef(vec2 p, vec2 r, float rot) {
+  float ca = cos(-rot), sa = sin(-rot);
+  vec2 q = vec2(p.x * ca - p.y * sa, p.x * sa + p.y * ca);
+  float k1 = length(q / r);
+  float k2 = length(q / (r * r));
+  if (k2 == 0.0) return -min(r.x, r.y);
+  return (k1 - 1.0) * (k1 / k2);
+}
+
+// Fillet union WITHIN a cluster, plain min ACROSS clusters. That split is what
+// makes connection a decision rather than an accident of overlap: forms in one
+// cluster grow a neck, forms in different clusters never touch however close
+// the composition packs them.
+// Polynomial smooth minimum — the convex, flowing union.
 float sminf(float a, float b, float k) {
+  if (k <= 0.0) return min(a, b);
   float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// Split from its threshold so the Form ramp can blend distances rather than
-// masks — see blobDist() in js/cymafield.js for why that matters.
-float blobDist(vec2 p) {
-  float d = length(p - uBlob[0].xy) - uBlob[0].z;
-  for (int i = 1; i < 10; i++) {
-    if (i >= uBlobN) break;
-    d = sminf(d, length(p - uBlob[i].xy) - uBlob[i].z, uBlobK);
+// MIRRORS metaDist() in js/metafield.js, which unions a cluster with a plain
+// smooth minimum at blendR. Anything else here is a CPU/GPU divergence, and the
+// flat view and the vector export both read the CPU side.
+float clusterUnionf(float d1, float d2) {
+  return sminf(d1, d2, uMetaK);
+}
+
+float metaDistf(vec2 q) {
+  // Scale/crop is a TRUE zoom: evaluate at p/S and scale the result by S, so
+  // positions, radii and necks all enlarge together.
+  vec2 p = q / uMetaScale;
+  float best = 1e9;
+  for (int c = 0; c < 8; c++) {
+    float dc = 1e9;
+    for (int i = 0; i < 14; i++) {
+      if (i >= uMetaN) break;
+      if (int(uMetaRC[i].y) != c) continue;
+      float d = sdEllipsef(p - uMeta[i].xy, uMeta[i].zw, uMetaRC[i].x);
+      dc = (dc > 1e8) ? d : clusterUnionf(dc, d);
+    }
+    best = min(best, dc);
   }
-  return d;
-}
-
-float blobAt(vec2 p) {
-  return 1.0 - smoothstep(-0.012, 0.012, blobDist(p));
-}
-
-// The organism, sampled from its baked grid. The decode MIRRORS
-// unpackDistance() in js/sdftex.js — one format, split across two languages.
-// texture2D already returns 0-1 floats, so the JS side's /255 is applied for
-// us and this is (r + g/255) * 2*RANGE - RANGE with RANGE = 2.
-float organismDist(vec2 p) {
-  // The bake covers x in [-aspect, aspect] and y in [-1, 1], but p spans
-  // +-3.15/2 down the viewport at zoom 1. Without this divide the organism
-  // would occupy the middle 63% of the frame and everything past it would be
-  // CLAMP_TO_EDGE smear — flat cuts where the form should keep going.
-  // Mirrors ORG_SPAN in js/cymafield.js.
-  vec2 q = p / 1.575;
-  float a = uOrgSize.x / uOrgSize.y;
-  vec2 uv = vec2((q.x / a + 1.0) * 0.5, (1.0 - q.y) * 0.5);
-  // Past the bake, report "far outside" rather than sampling. CLAMP_TO_EDGE
-  // would repeat the outermost row and smear it across the rest of the view
-  // whenever the frame shows more world than the bake covers — which the
-  // chrome inset alone does, at zoom 0.52. bake()'s own sample() returns FAR
-  // here for the same reason; this keeps the GPU honest with the CPU.
-  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 10.0;
-  vec4 t = texture2D(uOrganism, uv);
-  // Back to world units, since q was scaled down to reach the bake.
-  return ((t.r + t.g / 255.0) * 4.0 - 2.0) * 1.575;
+  return best * uMetaScale;
 }
 
 float nodalAt(vec2 p) {
@@ -160,29 +169,9 @@ float nodalAt(vec2 p) {
   float soft = 0.10 * (1.0 + uSimple);
   float lobe = smoothstep(thr - soft, thr + soft, f);
   float T = mix(line, lobe, uMass);
-  // Cross-fade to the metaball form: a modal field cannot produce a single
-  // fat multi-armed blob at any setting, so that shape is built directly and
-  // blended in. In between, the cymatic figure still reads through it.
-  // smoothstep, not linear: a linear blend leaves a visible ghost web
-  // behind the blob at Form 0.85-0.95.
-  // The Form ramp, hinged at 0.5 — mirrors nodalThickness() in js/cymafield.js.
-  //   0.0 -> 0.5  cymatic field -> blob   (mask blend)
-  //   0.5 -> 1.0  blob -> organism        (DISTANCE blend, thresholded once)
-  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, min(1.0, uForm * 2.0)));
-
-  if (uForm > 0.5 && uHasOrganism > 0.5) {
-    float upper = smoothstep(0.0, 1.0, (uForm - 0.5) * 2.0);
-    float d = mix(blobDist(p), organismDist(p), upper);
-    // One pixel of transition, no more. This is what makes the upper half
-    // crisp where blending thresholded masks smears over tens of pixels.
-    T = 1.0 - smoothstep(-uPxWorld, uPxWorld, d);
-  }
-  // The dish edge is released as Form crosses into the organism — see the
-  // matching comment in nodalThickness(). Without this the organism is trapped
-  // in a disc and cannot run off the frame.
-  float plate = 1.0 - smoothstep(1.02, 1.30, length(p));
-  float release = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
-  return T * mix(plate, 1.0, release);
+  // Soft plate boundary — the dish edge, not a hard crop. A Chladni figure
+  // lives on a physical plate and must end at its rim.
+  return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
 
 // Emergence mask. The figure floods outward from the centre, so a design
@@ -190,13 +179,14 @@ float nodalAt(vec2 p) {
 // At uGrow = 0 nothing is visible — that is the resting state now, instead of
 // a scatter of unrelated droplets sitting over the figure.
 float waterAt(vec2 p) {
-  // Released for the organism, exactly as the plate edge is — mirrors
-  // reveal() in js/cymafield.js. This is a fixed radius in WORLD units, but
-  // how much world is on screen depends on zoom, so no constant widening
-  // covers every zoom.
+  // Two generators, routed — not blended. Metaball Cymatic is exempt from the
+  // emergence mask: that mask is a fixed radius in WORLD units while how much
+  // world is on screen depends on zoom, and a composition whose language is
+  // forms running off the frame cannot be bounded by a circle.
+  if (uMode > 0.5) {
+    return clamp(1.0 - smoothstep(-uPxWorld, uPxWorld, metaDistf(p)), 0.0, 1.0);
+  }
   float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
-  float revRelease = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
-  reveal = mix(reveal, 1.0, revRelease);
   return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }
 
@@ -238,14 +228,114 @@ void main() {
     float gmag = max(length(grad) / (2.0 * px), 1e-4);
     float dEdge = abs(T - 0.08) / gmag;
 
-    float d = mix(dCentre, dEdge, uForm);
+    // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
+    // boundary draws both sides of every line and every curve arrives doubled.
+    // A metaball has no spine, so it keeps its boundary.
+    float d = mix(dCentre, dEdge, uMode);
 
     // Gate by water PRESENCE as a multiplier, not by dividing the distance:
     // the division let isolated points where the field grazes zero outside
     // the figure sneak through as speckle dots across the plate.
-    float wet = mix(smoothstep(0.04, 0.12, T), 1.0, uForm);
+    float wet = mix(smoothstep(0.04, 0.12, T), 1.0, uMode);
     float line = (1.0 - smoothstep(uLineW * 0.5, uLineW, d)) * wet;
     gl_FragColor = mix(vec4(mix(uGround, uInk, line), 1.0), vec4(uInk, line), uTransparent);
+    return;
+  }
+
+  // ── Metaball Cymatic water ─────────────────────────────────────────
+  //
+  // MATERIAL ONLY. Nothing here touches T, the coverage ramp or the alpha, so
+  // the silhouette, the flat view and the vector export are unaffected.
+  //
+  // A metaball is FLAT inside: the coverage gradient is zero everywhere except
+  // at the boundary, so shading built on that gradient can only light the rim
+  // and leaves the interior to be filled by a travelling-wave pattern — which
+  // is what read as pearl and airbrushed white bands.
+  //
+  // So the surface is built from the DISTANCE FIELD instead: a shallow dome
+  // over each form, deepest at its centre and thinning to nothing at the edge.
+  // That gives a real surface normal across the whole body, so the interior
+  // shows the background bent through the liquid rather than a painted
+  // texture, and the strongest refraction lands near the edges where a
+  // shallow lens actually bends most.
+  if (uMode > 0.5) {
+    float mt2 = uMatTime;
+    // Shimmer perturbs the SURFACE, not the colour: it moves the refraction
+    // rather than sweeping a white band across the form.
+    float ripple = uGloss * 0.020
+                 * sin(p.x * 3.3 + p.y * 2.1 + mt2 * 0.55)
+                 * sin(p.x * -2.4 + p.y * 3.6 - mt2 * 0.41);
+
+    // An EXPONENTIAL depth profile, not a clamped power.
+    //
+    // A distance field has a crease along its medial axis — the skeleton
+    // running through the middle of every form — and any height built on it
+    // inherits that crease as a visible speck or ridge at each lobe's centre.
+    // This profile's slope decays with depth, so the crease sits where the
+    // response is flattest and stops showing, while the edge keeps the steep
+    // falloff the lensing needs.
+    float K = 2.6;                        // how quickly the liquid deepens
+    float dome = 1.0 - exp(min(0.0, metaDistf(p)) * K);
+    float dxp = 1.0 - exp(min(0.0, metaDistf(p + e.xy)) * K);
+    float dxm = 1.0 - exp(min(0.0, metaDistf(p - e.xy)) * K);
+    float dyp = 1.0 - exp(min(0.0, metaDistf(p + e.yx)) * K);
+    float dym = 1.0 - exp(min(0.0, metaDistf(p - e.yx)) * K);
+    vec2 slope = vec2(dxp - dxm, dyp - dym) / (2.0 * px);
+    slope += ripple * vec2(sin(p.y * 5.0 + mt2 * 0.7), cos(p.x * 4.4 - mt2 * 0.6));
+    vec3 Nw = normalize(vec3(-slope.x * 0.055, 1.0, -slope.y * 0.055));
+
+    // Refraction scales with how much liquid the ray passes through and how
+    // steeply the surface tilts — near zero over the flat middle, strongest
+    // toward the rim. That is the lensing, and it is the whole effect.
+    float tilt = 1.0 - Nw.y;
+    vec2 ruv2 = vUv + Nw.xz * (0.045 * uRefract) * (0.25 + dome);
+    vec3 bg;
+    if (uHasBack > 0.5) {
+      float sp2 = uDispersion * 0.0035 * dome;
+      bg = vec3(texture2D(uBackTex, ruv2 + Nw.xz * sp2).r,
+                texture2D(uBackTex, ruv2).g,
+                texture2D(uBackTex, ruv2 - Nw.xz * sp2).b);
+    } else {
+      // No backdrop: the ground still has to be legible THROUGH the water, so
+      // it carries a gentle gradient for the lens to bend.
+      float vg = 1.0 - 0.30 * length(ruv2 - 0.5);
+      bg = uGround * (vg + 0.05 * sin(ruv2.y * 6.0 + ruv2.x * 2.0));
+    }
+
+    // Body: the background, taking on the liquid's own colour with depth. The
+    // liquid needs enough of its own presence for the connected silhouette to
+    // read, without becoming opaque.
+    vec3 colW = mix(bg, uDeep, clamp(dome * 0.78 * uDepth, 0.0, 1.0));
+    // Slight inward shading under the rim, where a real meniscus is thickest.
+
+    // Fresnel plus a meniscus shadow just inside it.
+    //
+    // The edge is what carries the silhouette, and it has to do so without a
+    // uniform white outline. A brightening alone washed out; pairing it with a
+    // slight darkening immediately inside gives the boundary real definition,
+    // which is also how a meniscus actually reads — bright lip, thicker
+    // shadowed water behind it.
+    // The dome's slope is gentle, so the edge response needs a steep gate or
+    // the boundary never reads.
+    float fr = pow(clamp(tilt * 11.0, 0.0, 1.0), 1.1);
+    colW *= 1.0 - 0.20 * smoothstep(0.10, 0.85, fr);
+    colW += (vec3(1.0) - colW) * fr * 0.85 * uRim;
+
+    // A few small glints, not a sheet.
+    //
+    // The light is deliberately OBLIQUE. A near-overhead light puts the
+    // specular peak where the surface is flattest — dead centre of every lobe —
+    // so an identical glint repeated on each one and read as an artefact rather
+    // than as light. Off-axis, it lands on the shoulder where the surface
+    // actually turns, and only on some forms.
+    vec3 Lw = normalize(vec3(-0.62, 0.42, 0.44));
+    float sp3 = pow(max(0.0, dot(Nw, normalize(Lw + vec3(0.0, 1.0, 0.0)))), 90.0);
+    colW += vec3(1.0) * sp3 * 0.40 * uGloss * smoothstep(0.02, 0.10, tilt);
+
+    float covW = smoothstep(0.02, 0.14, T);
+    vec3 plainW = uGround * (1.0 - 0.30 * length(vUv - 0.5));
+    colW = mix(plainW, colW, covW);
+    gl_FragColor = mix(vec4(colW, 1.0), vec4(colW, covW), uTransparent);
     return;
   }
 

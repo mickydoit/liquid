@@ -69,9 +69,9 @@ test('hold: geometry frozen, material animation continues', () => {
   const { conductor, log, frame } = harness();
   let t = drive(conductor, frame, SILENT, 0.5, 0);
   t = drive(conductor, frame, TONE(220), 3, t);
-  assert.equal(log.fields[log.fields.length - 1].__anim, 'full');
+  assert.equal(log.fields[log.fields.length - 1].__anim, 'live-active');
   t = drive(conductor, frame, SILENT, 6, t);
-  assert.equal(log.fields[log.fields.length - 1].__anim, 'material');
+  assert.equal(log.fields[log.fields.length - 1].__anim, 'live-hold');
 });
 
 test('hold: a new sound transitions smoothly out of the held design', () => {
