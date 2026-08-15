@@ -162,6 +162,88 @@ function anchors(c, want, sep) {
 
 // The grouping plan: cluster sizes summing to the lobe count, always including
 // singletons so something stays separate at full Merge.
+
+// ── composition templates ──────────────────────────────────────────────
+//
+// The cymatic scaffold proposes, but it does not decide the composition.
+//
+// Modal peaks lie along ridges, so the strongest few are frequently near
+// collinear — which is exactly how the landscape kept arriving as a top-left to
+// bottom-right diagonal however the anchors were spread. Peaks now influence
+// the composition (which template, which mirroring, how far each role is nudged
+// from its slot) rather than dictating it.
+//
+// Positions are fractions of the frame half-extent, so a template means the
+// same arrangement in any aspect. Each is designed with the two major masses in
+// visual relationship and the accents placed to break the line between them,
+// not to sit on it.
+const TEMPLATES = {
+  portrait: [
+    // dominant upper-right, balance lower-left, an accent beside each mass
+    [[0.34, 0.42], [-0.34, -0.44], [-0.42, 0.16], [0.30, -0.14]],
+    // dominant upper-left, balance lower-centre-right, accents hugging each
+    [[-0.32, 0.46], [0.30, -0.42], [0.40, 0.18], [-0.26, -0.16]],
+    // dominant lower-right, balance upper-centre-left, accents offset
+    [[0.30, -0.40], [-0.30, 0.44], [0.38, 0.20], [-0.34, -0.14]],
+  ],
+  landscape: [
+    // dominant right, balance upper-left, accents above and below centre
+    [[0.44, -0.22], [-0.44, 0.26], [-0.04, 0.44], [0.08, -0.46]],
+    // dominant lower-right, balance left-centre, accents split vertically
+    [[0.40, 0.30], [-0.46, -0.20], [0.00, -0.44], [-0.10, 0.42]],
+    // dominant left, balance right, accents stacked off-axis
+    [[-0.44, -0.26], [0.42, 0.28], [0.04, 0.44], [-0.06, -0.42]],
+  ],
+};
+
+// How straight a line the component centroids fall on. 1 is perfectly
+// collinear; the diagonal arrangement scores around 0.95.
+function linearity(pts) {
+  const n = pts.length;
+  if (n < 3) return 0;
+  let mx = 0, my = 0;
+  for (const p of pts) { mx += p[0]; my += p[1]; }
+  mx /= n; my /= n;
+  let sxx = 0, syy = 0, sxy = 0;
+  for (const p of pts) {
+    const dx = p[0] - mx, dy = p[1] - my;
+    sxx += dx * dx; syy += dy * dy; sxy += dx * dy;
+  }
+  const den = Math.sqrt(sxx * syy);
+  return den < 1e-9 ? 1 : Math.abs(sxy / den);
+}
+
+// How far the middle of the canvas is from the nearest component, as a fraction
+// of the half-frame. A large value is the empty corridor through the centre.
+function centreVoid(pts) {
+  let best = Infinity;
+  for (const p of pts) best = Math.min(best, Math.hypot(p[0], p[1]));
+  return best;
+}
+
+// Pick a template and a mirroring for this sound. Every candidate is scored and
+// the best kept, so a layout that reads as a line or leaves a hole through the
+// middle cannot be selected however the seed falls.
+function composition(c, rng) {
+  const set = TEMPLATES[c.aspect >= 1 ? 'landscape' : 'portrait'];
+  const cands = [];
+  for (let t = 0; t < set.length; t++) {
+    for (let mx = 0; mx < 2; mx++) {
+      for (let my = 0; my < 2; my++) {
+        const pts = set[t].map(([x, y]) => [mx ? -x : x, my ? -y : y]);
+        cands.push({ pts, score: linearity(pts) + Math.max(0, centreVoid(pts) - 0.34) * 1.6 });
+      }
+    }
+  }
+  // Seeded order, then the lowest score wins — variation across sounds without
+  // ever selecting an invalid arrangement.
+  const order = cands.map((v, i) => ({ v, k: rng() + i * 1e-6 }))
+                     .sort((a, b) => a.k - b.k).map((o) => o.v);
+  let best = order[0];
+  for (const o of order) if (o.score < best.score - 1e-6) best = o;
+  return best.pts;
+}
+
 // The composition plan: explicit ROLES, not a random size partition.
 //
 // A partition produced four or five similar masses; the reference is a few
@@ -221,8 +303,32 @@ function layout(s) {
 
   // Anchors are spaced in units of the solved lobe radius, so the ratio that
   // actually decides density is set here in one place.
-  const regions = anchors(c, plan.length, rUnit * lerp(1.32, 2.10, c.spacing));
-  const nGroups = Math.min(plan.length, regions.length);
+  // Role slots from a validated template, nudged by the cymatic scaffold.
+  //
+  // The scaffold is sampled at each slot and its local peaks pull the role a
+  // short way, so the sound still shapes the arrangement — but it can no longer
+  // drag the composition onto a ridge.
+  const slots = composition(c, rng);
+  const peakHints = anchors(c, Math.max(4, plan.length), rUnit * lerp(1.32, 2.10, c.spacing));
+  const regions = [];
+  for (let g = 0; g < plan.length; g++) {
+    const [sx, sy] = slots[Math.min(g, slots.length - 1)];
+    // Extra roles beyond the template's four fan out around the frame rather
+    // than stacking on the last slot.
+    const extra = g >= slots.length ? (g - slots.length + 1) * 1.7 : 0;
+    let bx = sx * fx * (extra ? 0.55 : 1), by = sy * fy * (extra ? 0.55 : 1);
+    if (extra) { bx = Math.cos(extra) * 0.5 * fx; by = Math.sin(extra) * 0.5 * fy; }
+    // Nudge toward the nearest scaffold peak, capped so the slot still governs.
+    let near = null, nd = Infinity;
+    for (const p of peakHints) {
+      const d = Math.hypot(p.x - bx, p.y - by);
+      if (d < nd) { nd = d; near = p; }
+    }
+    const pull = 0.22 * (1 - c.symmetry * 0.5);
+    if (near) { bx += (near.x - bx) * pull; by += (near.y - by) * pull; }
+    regions.push({ x: bx, y: by });
+  }
+  const nGroups = plan.length;
 
   // Merge stages. Forming the dominant mass comes first, then balance, then an
   // accent is ABSORBED into the balance mass at the top of the range — which is
@@ -363,6 +469,31 @@ function layout(s) {
     }
   };
   for (let pass = 0; pass < 12; pass++) sepPass();
+
+  // Draw the components together BEFORE fitting.
+  //
+  // The clearance pass only guarantees they do not overlap; left there, they
+  // drift to the corners and the refit shrinks everything, which is the empty
+  // corridor through the middle. Contracting toward the composition centroid
+  // and refitting to the same coverage enlarges the components instead of
+  // merely zooming the same sparse arrangement. The clearance pass runs again
+  // afterwards so nothing is pushed into contact.
+  {
+    let ccx = 0, ccy = 0, n = 0;
+    for (const ids of clusters) {
+      for (const i of ids) { ccx += balls[i].x; ccy += balls[i].y; n++; }
+    }
+    ccx /= Math.max(1, n); ccy /= Math.max(1, n);
+    const DRAW_IN = 0.80;
+    for (const ids of clusters) {
+      let gx = 0, gy = 0;
+      for (const i of ids) { gx += balls[i].x; gy += balls[i].y; }
+      gx /= ids.length; gy /= ids.length;
+      const nx = ccx + (gx - ccx) * DRAW_IN, ny = ccy + (gy - ccy) * DRAW_IN;
+      for (const i of ids) { balls[i].x += nx - gx; balls[i].y += ny - gy; }
+    }
+    for (let pass = 0; pass < 8; pass++) sepPass();
+  }
 
   // Fit to the frame, THEN apply Spacing.
   //
