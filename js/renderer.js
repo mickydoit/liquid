@@ -1,6 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=1a2f177b';
-import { stepGrow, isMeta } from './cymafield.js?v=1a2f177b';
-import { metaSolve, META_MAX } from './metafield.js?v=1a2f177b';
+import { VERT, FRAG } from './shader.js?v=76298d43';
+import { stepGrow, isMeta } from './cymafield.js?v=76298d43';
+import { metaSolve, META_MAX } from './metafield.js?v=76298d43';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -13,7 +13,7 @@ const UNIFORMS = [
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
   'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass',
-  'uMeta', 'uMetaRC', 'uMetaN', 'uMetaK', 'uMetaBlend', 'uMetaScale', 'uMode',
+  'uMeta', 'uMetaRC', 'uMetaN', 'uMetaK', 'uMetaScale', 'uMode',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
   'uPxWorld',
@@ -172,7 +172,7 @@ export class LiquidRenderer {
     const meta = isMeta(s);
     gl.uniform1f(u.uMode, meta ? 1 : 0);
     if (meta) {
-      const { balls, fillet, blend, scale } = metaSolve(s);
+      const { balls, blendR, scale } = metaSolve(s);
       const xy = this._metaArr || (this._metaArr = new Float32Array(META_MAX * 4));
       const rc = this._metaRC || (this._metaRC = new Float32Array(META_MAX * 2));
       xy.fill(0); rc.fill(0);
@@ -185,13 +185,15 @@ export class LiquidRenderer {
       gl.uniform4fv(u.uMeta, xy);
       gl.uniform2fv(u.uMetaRC, rc);
       gl.uniform1i(u.uMetaN, n);
-      gl.uniform1f(u.uMetaK, fillet);
-      gl.uniform1f(u.uMetaBlend, blend);
+      // uMetaK is the smooth-union radius. Passing a field the solve no longer
+      // returns made this `undefined`, which uniform1f turns into NaN — and a
+      // NaN union makes the whole field NaN, which is why the approved
+      // composition arrived as two stray lobes.
+      gl.uniform1f(u.uMetaK, blendR);
       gl.uniform1f(u.uMetaScale, scale);
     } else {
       gl.uniform1i(u.uMetaN, 0);
       gl.uniform1f(u.uMetaK, 0.1);
-      gl.uniform1f(u.uMetaBlend, 0.0);
       gl.uniform1f(u.uMetaScale, 1.0);
     }
     gl.uniform1f(u.uHasBack, this._backTex ? 1 : 0);

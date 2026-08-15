@@ -25,7 +25,6 @@ uniform vec4 uMeta[14];     // xy = centre, zw = ellipse radii
 uniform vec2 uMetaRC[14];   // x = rotation, y = cluster id
 uniform int uMetaN;
 uniform float uMetaK;       // fillet radius for necks within a cluster
-uniform float uMetaBlend;   // 0 = concave fillet waist, 1 = broad flowing union
 uniform float uMetaScale;   // Scale/crop, a true zoom of the finished artwork
 uniform float uMode;        // 0 = Detailed Cymatic, 1 = Metaball Cymatic
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
@@ -91,12 +90,6 @@ float psi(vec2 p) {
 // tangent arc in the corner where two surfaces meet, which is the hourglass
 // waist this look is built on. smin bulges convexly there and reads as soap
 // bubbles.
-float unionRoundf(float d1, float d2, float kf) {
-  if (kf <= 0.0) return min(d1, d2);
-  vec2 u = max(vec2(kf - d1, kf - d2), 0.0);
-  return max(kf, min(d1, d2)) - length(u);
-}
-
 // Approximate ellipse SDF. Exact for circles and close enough for the modest
 // ratios the generator allows; the exact form needs an iterative root solve.
 float sdEllipsef(vec2 p, vec2 r, float rot) {
@@ -119,13 +112,11 @@ float sminf(float a, float b, float k) {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-// Fillet at low Merge for a narrow hourglass waist, smin at high Merge for a
-// broad flowing join. Fillet alone exaggerates the pinch into peanuts; smin
-// alone dissolves the lobes into one oval.
+// MIRRORS metaDist() in js/metafield.js, which unions a cluster with a plain
+// smooth minimum at blendR. Anything else here is a CPU/GPU divergence, and the
+// flat view and the vector export both read the CPU side.
 float clusterUnionf(float d1, float d2) {
-  float f = unionRoundf(d1, d2, uMetaK);
-  float sm = sminf(d1, d2, uMetaK * mix(1.5, 3.2, uMetaBlend));
-  return mix(f, sm, uMetaBlend);
+  return sminf(d1, d2, uMetaK);
 }
 
 float metaDistf(vec2 q) {

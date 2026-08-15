@@ -1,7 +1,7 @@
 // The approved compositions, and how a silhouette is reduced to a comparable
 // signature. Shared by the fixture generator and the regression test so the two
 // can never disagree about what is being compared.
-import { defaultMeta, metaDist } from '../js/metafield.js';
+import { defaultMeta, metaDist, META_FRAME } from '../js/metafield.js';
 import { idleState } from '../js/cymafield.js';
 
 const A = { pitchNorm: 0.42, rms: 0.31, centroid: 0.38, spread: 0.22, pitchConf: 0.8 };
@@ -22,8 +22,7 @@ export function signature({ features, aspect }) {
   const s = Object.assign(idleState(), {
     amp: 0.6, grow: 1, features, aspect, mode: 'meta', meta: defaultMeta(),
   });
-  const fx = aspect >= 1 ? 1.2 : 1.2 * aspect;
-  const fy = aspect >= 1 ? 1.2 / aspect : 1.2;
+  const fx = META_FRAME * aspect, fy = META_FRAME;
   let bits = '';
   for (let j = 0; j < GRID; j++) {
     const y = fy - (2 * fy * (j + 0.5)) / GRID;

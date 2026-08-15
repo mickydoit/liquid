@@ -15,9 +15,9 @@
 // and every lobe is its own component. At Merge 1 the plan is fully realised.
 // Anchors, lobe sizes and the plan never change with Merge — only which groups
 // are active — so the layout stays stable while the connectivity moves.
-import { psi } from './cymafield.js?v=1a2f177b';
-import { makeRng } from './blobfield.js?v=1a2f177b';
-import { fnv1a } from './hash.js?v=1a2f177b';
+import { psi } from './cymafield.js?v=76298d43';
+import { makeRng } from './blobfield.js?v=76298d43';
+import { fnv1a } from './hash.js?v=76298d43';
 
 export const META_MAX = 12;
 export const META_CLUSTER_MAX = 12;
@@ -42,10 +42,17 @@ const lerp = (a, b, t) => a + (b - a) * t;
 // past this an ellipse stops reading as a lobe and starts reading as a spike.
 const MAX_ECC = 1.6;
 
-// Half-extent of the composition's frame, in world units. Exported so the
-// vector export frames exactly the same rectangle the field is composed
-// against — they were 1.35 and 1.2, which shipped the design ~15% small.
-export const META_FRAME = 1.2;
+// Half-extent of the composition's frame, in world units.
+//
+// This is the shader's own view rectangle at zoom 1: main() maps
+// p = (vUv - 0.5 - uPan) * vec2(uAspect, 1.0) * 3.15 / uZoom, so the half-HEIGHT
+// is always 3.15/2 and the half-width is that times the aspect. The field must
+// be composed against exactly that rectangle or the design renders at the wrong
+// scale inside the frame — laying it out against a smaller box is what made the
+// approved composition arrive as two small droplets in the real app.
+//
+// Exported so the vector exporter frames the same rectangle too.
+export const META_FRAME = 3.15 / 2;
 
 // Fraction of the frame the composition should span.
 const TARGET_COVER = 0.92;
@@ -97,9 +104,25 @@ export function metaSeed(s) {
 
 // The frame in world units. Sizes are expressed against the SHORTER edge so the
 // targets mean the same thing in portrait and landscape.
+// The box the SCAFFOLD is sampled in.
+//
+// psi() has a fixed spatial frequency, so it is not scale-invariant: sampling
+// it over a larger rectangle yields a different pattern of peaks. The scaffold
+// is a pattern, not a physical size, so it is always evaluated in this
+// canonical box and the peaks are then mapped into whatever frame the design is
+// composed against. Without this, changing META_FRAME silently reshuffles every
+// approved composition.
+function canonOf(c) {
+  const cx = c.aspect >= 1 ? 1.2 : 1.2 * c.aspect;
+  const cy = c.aspect >= 1 ? 1.2 / c.aspect : 1.2;
+  return { cx, cy };
+}
+
 function frameOf(c) {
-  const fx = c.aspect >= 1 ? META_FRAME : META_FRAME * c.aspect;
-  const fy = c.aspect >= 1 ? META_FRAME / c.aspect : META_FRAME;
+  // Height is fixed and width follows the aspect — the shader's convention. The
+  // previous form scaled the SHORT edge down instead, which has the same aspect
+  // ratio but a different scale, and that is the mismatch.
+  const fx = META_FRAME * c.aspect, fy = META_FRAME;
   return { fx, fy, short: 2 * Math.min(fx, fy) };
 }
 
@@ -112,13 +135,17 @@ function frameOf(c) {
 function anchors(c, want, sep) {
   const sc = scaffoldState(c);
   const { fx, fy } = frameOf(c);
+  const { cx, cy } = canonOf(c);
   const N = 44;
   const cand = [];
   for (let j = 1; j < N - 1; j++) {
     for (let i = 1; i < N - 1; i++) {
-      const x = -fx + (2 * fx * i) / (N - 1);
-      const y = -fy + (2 * fy * j) / (N - 1);
-      cand.push({ x, y, v: Math.abs(psi(x, y, sc)) });
+      // Sampled in the CANONICAL box, positioned in the real frame. psi has a
+      // fixed spatial frequency, so evaluating it over the frame directly makes
+      // the whole composition depend on the frame's absolute size.
+      const u = -1 + (2 * i) / (N - 1);
+      const v = -1 + (2 * j) / (N - 1);
+      cand.push({ x: u * fx, y: v * fy, v: Math.abs(psi(u * cx, v * cy, sc)) });
     }
   }
   // Ranked by field STRENGTH, not by strict local maxima.
