@@ -4,8 +4,8 @@
 // when its inputs do.
 //
 // Knows nothing about WebGL. The renderer decides what to do with the grid.
-import { makeBlobField, defaultControls } from './blobfield.js?v=2ffd3a4f';
-import { bake, FORMATS, gridSampler } from './bake.js?v=2ffd3a4f';
+import { makeBlobField, defaultControls } from './blobfield.js?v=ac347946';
+import { bake, FORMATS, gridSampler } from './bake.js?v=ac347946';
 
 // Every control, in a fixed order, so the key is stable across objects that
 // happen to enumerate their properties in a different order.
@@ -44,7 +44,7 @@ export function makeOrganismCache({ worker = false, onReady = null } = {}) {
   if (worker && typeof Worker !== 'undefined') {
     try {
       // A module worker, because organism.js uses ES imports.
-      w = new Worker(new URL('./organism.worker.js?v=2ffd3a4f', import.meta.url), { type: 'module' });
+      w = new Worker(new URL('./organism.worker.js?v=ac347946', import.meta.url), { type: 'module' });
       w.onmessage = (e) => {
         // Stale replies are dropped: dragging a slider queues several bakes
         // and they are not guaranteed to finish in order, so without this an

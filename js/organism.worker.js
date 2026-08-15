@@ -4,7 +4,7 @@
 // as a stutter while a Poster slider is being dragged. It calls bakeOrganism()
 // rather than reimplementing anything, so the worker and the synchronous
 // fallback cannot drift apart.
-import { bakeOrganism } from './organism.js?v=2ffd3a4f';
+import { bakeOrganism } from './organism.js?v=ac347946';
 
 self.onmessage = (e) => {
   const { seed, controls, res, aspect, token } = e.data;

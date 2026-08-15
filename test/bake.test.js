@@ -473,3 +473,35 @@ test('bake output feeds fieldOutline without producing garbage rings', () => {
     for (const [x, y] of r) assert.ok(Number.isFinite(x) && Number.isFinite(y));
   }
 });
+
+test('the baked contour keeps sub-cell precision', () => {
+  // The staircase regression. signedEdt reconstructs distance from a BINARY
+  // mask, so the zero level set can only land on a half-cell staircase — an
+  // error that stays ~0.23 cells RMS at EVERY resolution, because it is grid
+  // quantization rather than anything about the shape. Raising resolution only
+  // makes the steps smaller, never smoother.
+  //
+  // A perfect analytic disc is used so any deviation from a true circle was
+  // introduced by bake() and by nothing else.
+  const R = 0.6;
+  const disc = (x, y) => Math.hypot(x, y) - R;
+  // Landscape, where `res` is the long edge so the SHORT edge gets res/aspect
+  // cells — half the vertical resolution of a portrait bake, which is why this
+  // showed up on a wide window first.
+  const b = bake(disc, { aspect: 2.0, res: 256, simplify: 0 });
+  const cell = 2 / b.h;
+
+  let sumSq = 0, n = 0;
+  for (let k = 0; k < 360; k++) {
+    const th = (k / 360) * Math.PI * 2;
+    let lo = 0.2, hi = 1.0;
+    for (let it = 0; it < 40; it++) {
+      const mid = (lo + hi) / 2;
+      if (b.sample(Math.cos(th) * mid, Math.sin(th) * mid) < 0) lo = mid; else hi = mid;
+    }
+    const e = (lo + hi) / 2 - R;
+    sumSq += e * e; n++;
+  }
+  const rmsCells = Math.sqrt(sumSq / n) / cell;
+  assert.ok(rmsCells < 0.05, `contour deviates ${rmsCells.toFixed(3)} cells RMS from a true circle`);
+});
