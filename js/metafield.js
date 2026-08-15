@@ -43,7 +43,7 @@ const lerp = (a, b, t) => a + (b - a) * t;
 const MAX_ECC = 1.6;
 
 // Fraction of the frame the composition should span.
-const TARGET_COVER = 0.84;
+const TARGET_COVER = 0.92;
 
 function resolved(s) {
   const m = Object.assign(defaultMeta(), s.meta);
@@ -104,7 +104,7 @@ function frameOf(c) {
 // string: peak strength correlates along a modal ridge, so the top few are
 // often nearly collinear. At most one anchor per grid cell forces the
 // composition to occupy two dimensions.
-function anchors(c, want, nLobes) {
+function anchors(c, want, sep) {
   const sc = scaffoldState(c);
   const { fx, fy } = frameOf(c);
   const N = 44;
@@ -134,10 +134,12 @@ function anchors(c, want, nLobes) {
   // One anchor per cell first, so the composition occupies two dimensions
   // rather than stringing along a modal ridge, which is where the diagonal
   // came from.
-  // Scaled to the lobe size so anchors start roughly tangent: the push-apart
-  // then has almost nothing to do, and the fit almost nothing to undo.
-  const rGuess = Math.sqrt((0.42 * 4 * fx * fy) / (Math.max(4, nLobes) * Math.PI));
-  const sep = rGuess * lerp(1.75, 2.55, c.spacing);
+  // `sep` is passed in, derived from the SOLVED lobe radius.
+  //
+  // It used to be computed here from its own independent estimate, which meant
+  // lobe size and anchor spacing moved separately — and since the frame-fit
+  // normalises the whole layout, only their RATIO affects density. Enlarging
+  // the lobes therefore did nothing at all: the fit simply scaled it back.
   const used = new Set();
   const out = [];
   for (const p of cand) {
@@ -160,81 +162,97 @@ function anchors(c, want, nLobes) {
 
 // The grouping plan: cluster sizes summing to the lobe count, always including
 // singletons so something stays separate at full Merge.
-function planSizes(nLobes, rng) {
-  const sizes = [1, 1];          // two guaranteed separate forms
-  let left = nLobes - 2;
-  // Bias toward larger groups as the lobe count rises. Otherwise more lobes
-  // simply meant more components, and a high Circle count broke the 3-7
-  // component target instead of building bigger masses.
-  const wantGroups = 4;
-  while (left > 0) {
-    const remainingSlots = Math.max(1, wantGroups - (sizes.length - 2));
-    const ideal = Math.ceil(left / remainingSlots);
-    const k = Math.min(3, Math.max(1, left <= 1 ? 1 : rng() < 0.3 ? ideal : Math.min(ideal + 1, 3)));
-    sizes.push(Math.min(k, left));
-    left -= Math.min(k, left);
+// The composition plan: explicit ROLES, not a random size partition.
+//
+// A partition produced four or five similar masses; the reference is a few
+// deliberately unequal ones. So the plan names them:
+//
+//   dominant — a three-lobe mass, the largest thing in the frame
+//   balance  — a two-lobe mass, second in weight
+//   accent   — single lobes, secondary, NOT circles competing with the masses
+//
+// At the default that is [3] [2] [1] [1]. Circle count adds or removes accents
+// and can promote balance to three lobes; it never adds more equal masses.
+function planRoles(nLobes) {
+  const roles = [];
+  const domK = nLobes >= 7 ? 3 : 2;
+  roles.push({ role: 'dominant', k: domK, weight: 1.0 });
+  let left = nLobes - domK;
+  if (left >= 2) {
+    // Two, not three, at seven lobes: the plan is [3] [2] [1] [1], and a
+    // three-lobe balance leaves no accents and no room to absorb one later.
+    const balK = left >= 6 ? 3 : 2;
+    roles.push({ role: 'balance', k: balK, weight: 0.90 });
+    left -= balK;
   }
-  return sizes;
+  // Accents shrink as they multiply, so a high Circle count adds secondary
+  // notes rather than more competing circles.
+  const accentWeights = [0.72, 0.60, 0.50, 0.45];
+  let ai = 0;
+  while (left > 0) {
+    roles.push({ role: 'accent', k: 1, weight: accentWeights[Math.min(ai, 3)] });
+    ai++; left--;
+  }
+  return roles;
 }
 
 function layout(s) {
-  // (anchor separation is derived from lobe size, below)
   const c = resolved(s);
   const rng = makeRng(metaSeed(s));
   const { fx, fy, short } = frameOf(c);
 
   const nLobes = Math.round(lerp(6, 10, c.count));
-  const plan = planSizes(nLobes, rng);
-  const regions = anchors(c, plan.length, nLobes);
+  const plan = planRoles(nLobes);
+
+  // Lobe radius solved from the area the composition should fill.
+  //
+  // Sum the weighted lobe areas the plan implies, then scale so the total lands
+  // on the ink target once overlap inside the connected masses is discounted.
+  // Sizing lobes by a fixed fraction and letting the frame-fit resolve it is
+  // what kept the design under-massed at roughly half the target.
+  const frameArea = 4 * fx * fy;
+  let weighted = 0;
+  for (let g = 0; g < plan.length; g++) weighted += plan[g].k * plan[g].weight * plan[g].weight;
+  const OVERLAP_LOSS = 0.76;      // joined lobes share area
+  // The constant is above the ink target because the frame-fit shrinks the
+  // layout after the lobes are sized; this is calibrated against the measured
+  // result rather than derived.
+  const rUnit = Math.sqrt((0.40 * frameArea) / (weighted * Math.PI * OVERLAP_LOSS)) * c.mass;
+
+  // Anchors are spaced in units of the solved lobe radius, so the ratio that
+  // actually decides density is set here in one place.
+  const regions = anchors(c, plan.length, rUnit * lerp(1.32, 2.10, c.spacing));
   const nGroups = Math.min(plan.length, regions.length);
 
-  // Lobe radius is DERIVED from the frame area and the lobe count, not fixed.
-  //
-  // A fixed fraction fought the frame-fit: sizing lobes, pushing them apart to
-  // clear one another, then scaling the whole layout back to fit meant more
-  // lobes always came out smaller and sparser, and ink collapsed as Circle
-  // count rose. Solving for the radius that fills the target area means the
-  // lobes fit by construction and the fit barely has to act.
-  const frameArea = 4 * fx * fy;
-  const rBase = Math.sqrt((0.52 * frameArea) / (nLobes * Math.PI)) * c.mass;
-  const rMax = rBase * 1.22;
-  const rMin = rMax / lerp(1.35, 2.05, c.sizeVar);
-
-  // Each group gets an activation threshold. Merge crossing a threshold joins
-  // that group, so the component count falls step by step instead of every
-  // overlap softening at once.
-  // Thresholds are SPREAD across the joinable groups rather than drawn
-  // independently. Independent draws clustered below 0.5, so every group was
-  // already joined by the middle setting and Merge 1 looked identical to it.
-  const joinable = plan.slice(0, nGroups).filter((k) => k > 1).length;
-  let joinIdx = 0;
+  // Merge stages. Forming the dominant mass comes first, then balance, then an
+  // accent is ABSORBED into the balance mass at the top of the range — which is
+  // how Merge 1 reaches three components without deleting anything.
   const groups = [];
   for (let g = 0; g < nGroups; g++) {
-    const k = plan[g];
-    const slot = k > 1 ? joinIdx++ : 0;
+    const p = plan[g];
     groups.push({
-      k,
+      k: p.k,
+      role: p.role,
       region: regions[g],
-      // Singletons never activate; they are the separate forms.
-      threshold: k === 1 ? 2
-        : lerp(0.08, 0.72, joinable <= 1 ? 0.35 : slot / (joinable - 1)),
-      scale: lerp(rMin, rMax, Math.pow(rng(), 0.75)),
+      threshold: p.role === 'dominant' ? 0.22 : p.role === 'balance' ? 0.40 : 2,
+      scale: rUnit * p.weight * lerp(1, 1 + 0.18 * c.sizeVar, rng()),
       rot: rng() * Math.PI * 2,
       ecc: 1 + c.stretch * (MAX_ECC - 1) * (0.4 + rng() * 0.6),
       jitter: [rng(), rng(), rng(), rng()],
     });
   }
-  groups[Math.floor(rng() * groups.length)].scale = rMax * 1.06;   // one dominant mass
+  // The first accent joins the balance mass near the top of Merge.
+  const balanceIdx = groups.findIndex((g) => g.role === 'balance');
+  const accentIdx = groups.findIndex((g) => g.role === 'accent');
+  const absorbAt = 0.78;
+  const absorbed = c.merge >= absorbAt && balanceIdx >= 0 && accentIdx >= 0;
 
   const balls = [];
-  const clusters = [];
+  const groupIds = [];
   for (const g of groups) {
     const active = c.merge >= g.threshold;
-    // Separation between a group's members. Inactive groups hold a clear gap so
-    // their members read as separate forms; active groups overlap enough for a
-    // broad waist, deepening as Merge rises past the threshold.
     const depth = active ? clamp01((c.merge - g.threshold) / Math.max(0.08, 1 - g.threshold)) : 0;
-    const sepK = active ? lerp(0.94, 0.72, depth) : 2.30;
+    const sepK = active ? lerp(0.94, 0.74, depth) : 2.30;
 
     const ids = [];
     const push = (x, y, r) => {
@@ -252,28 +270,53 @@ function layout(s) {
     if (g.k === 1) {
       push(g.region.x, g.region.y, R);
     } else if (g.k === 2) {
-      const rA = R, rB = R * lerp(1, 0.78, g.jitter[2]);
+      const rA = R, rB = R * lerp(1, 0.82, g.jitter[2]);
       const d = (rA + rB) * g.ecc * sepK;
       const dx = Math.cos(g.rot) * d * 0.5, dy = Math.sin(g.rot) * d * 0.5;
       push(g.region.x - dx, g.region.y - dy, rA);
       push(g.region.x + dx, g.region.y + dy, rB);
     } else {
-      // A triangle or short curved fan, never a line: three offsets spread over
-      // roughly 120-195 degrees around the anchor.
+      // A triangle or short curved fan, never a line.
       const sweep = lerp(2.1, 3.4, g.jitter[3]);
       for (let i = 0; i < 3; i++) {
-        const rr = R * lerp(0.80, 1.0, g.jitter[i]);
+        const rr = R * lerp(0.82, 1.0, g.jitter[i]);
         const a = g.rot + (i - 1) * (sweep / 2) + (g.jitter[i] - 0.5) * 0.3;
         const dist = R * g.ecc * sepK * 0.95;
         push(g.region.x + Math.cos(a) * dist, g.region.y + Math.sin(a) * dist, rr);
       }
     }
-
-    // An inactive group contributes one component PER LOBE. That is what makes
-    // the component count fall as Merge rises.
-    if (active) clusters.push(ids);
-    else for (const i of ids) clusters.push([i]);
+    groupIds.push({ ids, active });
   }
+
+  // The accent does not vanish when absorbed: it MOVES to the balance mass and
+  // joins it, so the relationship to the original composition survives.
+  if (absorbed) {
+    const bal = groupIds[balanceIdx].ids;
+    let bx = 0, by = 0, br = 0;
+    for (const i of bal) {
+      bx += balls[i].x; by += balls[i].y;
+      br = Math.max(br, Math.max(balls[i].rx, balls[i].ry));
+    }
+    bx /= bal.length; by /= bal.length;
+    const acc = balls[groupIds[accentIdx].ids[0]];
+    const dx = acc.x - bx, dy = acc.y - by;
+    const d = Math.hypot(dx, dy) || 1e-6;
+    const want = (br + Math.max(acc.rx, acc.ry)) * 0.86;
+    acc.x = bx + (dx / d) * want;
+    acc.y = by + (dy / d) * want;
+  }
+
+  const clusters = [];
+  groupIds.forEach((g, gi) => {
+    if (absorbed && gi === accentIdx) return;                  // handled below
+    if (g.active) {
+      const ids = g.ids.slice();
+      if (absorbed && gi === balanceIdx) ids.push(...groupIds[accentIdx].ids);
+      clusters.push(ids);
+    } else {
+      for (const i of g.ids) clusters.push([i]);
+    }
+  });
 
   clusters.forEach((ids, ci) => {
     for (const i of ids) balls[i].cluster = Math.min(ci, META_CLUSTER_MAX - 1);
@@ -286,14 +329,27 @@ function layout(s) {
   // capsule inscribed in a circle wastes about half that circle, so the circular
   // test held components a long way apart while looking tangent — which is why
   // the composition kept coming out sparse however the radii were sized.
+  // Radius of an ellipse in a given direction.
+  const dirR = (b, ux, uy) => {
+    const ca = Math.cos(-b.rot), sa = Math.sin(-b.rot);
+    const qx = ux * ca - uy * sa, qy = ux * sa + uy * ca;
+    return 1 / Math.sqrt((qx / b.rx) ** 2 + (qy / b.ry) ** 2);
+  };
   const sepPass = () => {
     for (let ci = 0; ci < clusters.length; ci++) {
       for (let cj = ci + 1; cj < clusters.length; cj++) {
         let worst = Infinity, bi = -1, bj = -1;
         for (const i of clusters[ci]) {
           for (const j of clusters[cj]) {
-            const gap = Math.hypot(balls[j].x - balls[i].x, balls[j].y - balls[i].y)
-                      - (Math.max(balls[i].rx, balls[i].ry) + Math.max(balls[j].rx, balls[j].ry)) * 1.04;
+            const dx = balls[j].x - balls[i].x, dy = balls[j].y - balls[i].y;
+            const dd = Math.hypot(dx, dy) || 1e-6;
+            // The ellipse's radius ALONG the line between centres, not
+            // max(rx, ry). The larger axis is a circular bound again, and it
+            // held elongated lobes apart by their worst case in every
+            // direction — which capped how dense the composition could get
+            // however the lobes were sized.
+            const gap = dd - (dirR(balls[i], dx / dd, dy / dd)
+                            + dirR(balls[j], -dx / dd, -dy / dd)) * 1.005;
             if (gap < worst) { worst = gap; bi = i; bj = j; }
           }
         }

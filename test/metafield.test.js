@@ -180,8 +180,14 @@ test('Scale/crop enlarges the forms themselves, not just their spacing', () => {
 });
 
 test('Scale/crop pushes forms past the frame', () => {
-  const s = compositionStats(st({ meta: { scaleCrop: 1.8 } }), ASPECT);
-  assert.ok(s.bboxCoverW > 0.97 && s.bboxCoverH > 0.97, 'forms should reach both edges');
+  // One axis fully spanning is the requirement: a zoom crops on whichever axis
+  // the composition is widest in, and demanding both would only be satisfiable
+  // by a composition that happens to be square.
+  const a = compositionStats(st({ meta: { scaleCrop: 1 } }), ASPECT);
+  const b = compositionStats(st({ meta: { scaleCrop: 1.8 } }), ASPECT);
+  assert.ok(Math.max(b.bboxCoverW, b.bboxCoverH) > 0.99, 'a mass must cross an edge');
+  assert.ok(b.inkFraction > a.inkFraction * 1.3,
+    `zooming must add mass (${a.inkFraction.toFixed(2)} -> ${b.inkFraction.toFixed(2)})`);
 });
 
 test('Spacing moves cluster centres without changing primitive size', () => {
