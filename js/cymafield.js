@@ -14,7 +14,13 @@
 // ⚠ Mirrored in density.js's CYMA_FRAG. If the two drift apart, the vector
 // export stops matching what is on screen. Change them together.
 
+import { metaThickness } from './metafield.js?v=b7cdba0d';
+
 const PI = Math.PI;
+
+// Which generator this design uses. Read in the few places the two paths
+// diverge, so the routing is one predicate rather than scattered string tests.
+export function isMeta(s) { return (s.mode ?? 'cymatic') === 'meta'; }
 
 export function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
 
@@ -37,10 +43,14 @@ export function idleState() {
     simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
     swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
     mass: 0,           // 0 = water on the NODES (a web), 1 = on the ANTINODES (islands)
-    form: 0,           // 0 = cymatic field, 0.5 = metaball blob, 1 = organism
-    // The baked organism, as { sample(x, y) -> signed distance }, or null
-    // before the first bake lands. See js/organism.js.
-    organism: null,
+    // Pattern style. Two explicit generators, NOT a blend: they are different
+    // geometry with different controls, and a slider between them produced
+    // shapes belonging to neither.
+    //   'cymatic' — the modal/nodal field in this file
+    //   'meta'    — clustered metaballs, js/metafield.js
+    mode: 'cymatic',
+    meta: null,        // Metaball Cymatic controls; see defaultMeta()
+    variation: 0,      // reroll step, deliberate presses only
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -185,34 +195,10 @@ export function nodalThickness(x, y, s) {
   // — is exactly what makes mid-Form look blurred: a half-and-half mask has no
   // sharp transition left to find. Distances have no such problem, so the
   // organism half is crisp at every position.
-  const form = s.form ?? 0;
-  if (form) {
-    // smoothstep, not linear: a linear blend leaves a ghost web behind the
-    // blob at Form 0.85-0.95.
-    const w = smoothstep(0, 1, Math.min(1, form * 2));
-    T = T * (1 - w) + blobThickness(x, y, s) * w;
-
-    if (form > 0.5 && s.organism) {
-      const upper = smoothstep(0, 1, (form - 0.5) * 2);
-      const dOrg = s.organism.sample(x / ORG_SPAN, y / ORG_SPAN) * ORG_SPAN;
-      const d = blobDist(x, y, s) * (1 - upper) + dOrg * upper;
-      // A fixed hairline: the CPU path has no screen to measure against, and
-      // the exporter contours the zero crossing regardless, so this only
-      // shapes antialiasing.
-      T = 1 - smoothstep(-0.004, 0.004, d);
-    }
-  }
-  // Soft plate boundary — the dish edge, not a hard crop.
-  //
-  // Released as Form crosses into the organism. A Chladni figure lives on a
-  // physical plate and must end at its rim, but the organism is a poster
-  // composition whose whole language is forms running off the frame. Holding
-  // the dish edge there would trap it in a disc and put the look out of reach
-  // at every slider setting.
+  // Soft plate boundary — the dish edge, not a hard crop. A Chladni figure
+  // lives on a physical plate and must end at its rim.
   const r = Math.sqrt(x * x + y * y);
-  const plate = 1 - smoothstep(1.02, 1.30, r);
-  const release = clamp01((form - 0.5) * 2);
-  T *= plate * (1 - release) + release;
+  T *= 1 - smoothstep(1.02, 1.30, r);
   return T;
 }
 
@@ -224,18 +210,12 @@ export function reveal(x, y, s) {
   const g = s.grow ?? 1;
   const r = Math.sqrt(x * x + y * y);
   const rev = 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
-  // Released for the organism, exactly as the plate edge is.
-  //
-  // Widening it was tried first and does not work: this is a fixed radius in
-  // WORLD units, but how much world is on screen depends on zoom — the chrome
-  // inset alone puts it at 0.52, so the frame corner sits at r ~ 3.7 rather
-  // than the 1.89 it reaches at zoom 1. No constant covers every zoom.
-  //
-  // The cost is that a submitted organism appears whole instead of flooding
-  // in. That is the right trade: emergence is the plate metaphor, and the
-  // poster it becomes is a static composition.
-  const release = clamp01(((s.form ?? 0) - 0.5) * 2);
-  return rev * (1 - release) + release;
+  // Metaball Cymatic is exempt. This is a fixed radius in WORLD units, but how
+  // much world is on screen depends on zoom — the chrome inset alone puts it at
+  // 0.52 — so no constant covers every zoom, and a composition whose language
+  // is forms running off the frame cannot be masked by a circle. Emergence
+  // belongs to the plate metaphor; the metaball composition arrives whole.
+  return isMeta(s) ? 1 : rev;
 }
 
 // Water thickness. Nodal structure only — there is no separate droplet layer:
@@ -244,71 +224,12 @@ export function reveal(x, y, s) {
 // Because there is now only one term, the CPU field and the GLSL agree
 // exactly and the vector export needs no exceptions.
 export function thickness(x, y, s) {
+  // The two generators are separate geometry, not two ends of one blend, so
+  // this routes rather than mixes.
+  if (isMeta(s)) return clamp01(metaThickness(x, y, s));
   return clamp01(nodalThickness(x, y, s) * reveal(x, y, s));
 }
 
-// The organism is baked over y in [-1, 1], but the shader's world coordinate
-// spans +-3.15/2 down the viewport at zoom 1 (see main() in js/shader.js). So
-// world coordinates are divided by this before sampling the bake, which is
-// what makes the organism exactly fill the frame at zoom 1 instead of
-// occupying its middle 63% with CLAMP_TO_EDGE smear beyond.
-export const ORG_SPAN = 1.575;
-
-// ── metaball form ──────────────────────────────────────────────────────
-//
-// A modal field can only give two topologies: water on the nodes is a web of
-// closed loops, water on the antinodes is a field of islands (one peak per
-// cell). Neither is a single fat multi-armed blob, however far it is
-// simplified — that shape is a metaball, a different construction entirely.
-//
-// So the blob is built directly, from the SAME modal numbers that drive the
-// field, and cross-faded with it. The lobe count, placement and size all
-// follow m, n, ma and amplitude, so it still answers to the sound.
-export const BLOB_MAX = 10;
-
-export function blobCircles(s) {
-  const o = orders(s);
-  const k = Math.max(3, Math.min(BLOB_MAX - 1, Math.round(3 + o.ma * 0.6)));
-  const out = [];
-  for (let i = 0; i < k; i++) {
-    const a = (i / k) * Math.PI * 2 + s.phase;
-    // Spacing vs radius is what decides arms-with-necks against one fused
-    // mass: the lobes have to stand clear of each other and be bridged, not
-    // overlap outright.
-    const dist = 0.46 + 0.13 * Math.sin(o.m * 1.7 + i * 2.3);
-    const rad = 0.19 + 0.07 * Math.sin(o.n * 2.1 + i * 1.7) + 0.08 * s.amp;
-    out.push({ x: Math.cos(a) * dist, y: Math.sin(a) * dist, r: Math.max(0.08, rad) });
-  }
-  // A centre lobe ties the arms into one body instead of a ring of islands.
-  out.push({ x: 0, y: 0, r: 0.16 + 0.10 * s.amp });
-  return out;
-}
-
-// Polynomial smooth minimum: blending circle SDFs with this rather than a
-// hard min is what produces the tapered necks between lobes.
-export function smin(a, b, k) {
-  if (k <= 0) return Math.min(a, b);
-  const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (b - a) / k));
-  return b * (1 - h) + a * h - k * h * (1 - h);
-}
-
-// The signed distance itself, kept separate from the threshold so the Form
-// ramp can blend it with the organism's distance BEFORE either is thresholded.
-// Blending two already-thresholded masks is what makes mid-Form look blurred:
-// a half-and-half mask has no sharp transition left to find.
-export function blobDist(x, y, s) {
-  const cs = blobCircles(s);
-  const k = 0.15 + 0.08 * (1 - (s.simple ?? 0));
-  let d = Math.hypot(x - cs[0].x, y - cs[0].y) - cs[0].r;
-  for (let i = 1; i < cs.length; i++) {
-    d = smin(d, Math.hypot(x - cs[i].x, y - cs[i].y) - cs[i].r, k);
-  }
-  return d;
-}
-
-export function blobThickness(x, y, s) {
-  return 1 - smoothstep(-0.012, 0.012, blobDist(x, y, s));
-}
 
 // ── audio → field ──────────────────────────────────────────────────────
 //

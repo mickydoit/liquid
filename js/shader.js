@@ -21,17 +21,15 @@ uniform float uM, uN, uKr, uMa, uMix, uAmp, uFine, uChaos, uPhase;
 uniform float uTimeC, uRipAmt, uRipT, uMatTime, uGrow;
 uniform float uSimple, uRim, uDepth, uRefract, uSwell;
 uniform float uMass;        // 0 = water on the nodes, 1 = on the antinodes
-uniform float uForm;        // 0 = cymatic field, 1 = a metaball blob
-uniform vec3 uBlob[10];     // xy = centre, z = radius
-uniform int uBlobN;
-uniform float uBlobK;       // smooth-union blend radius
+uniform vec4 uMeta[14];     // xy = centre, zw = ellipse radii
+uniform vec2 uMetaRC[14];   // x = rotation, y = cluster id
+uniform int uMetaN;
+uniform float uMetaK;       // fillet radius for necks within a cluster
+uniform float uMode;        // 0 = Detailed Cymatic, 1 = Metaball Cymatic
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
 uniform float uHasBack;
-uniform sampler2D uOrganism;  // baked signed distance, 16-bit across R and G
-uniform vec2 uOrgSize;
-uniform float uHasOrganism;
 uniform float uPxWorld;       // one pixel, in world units
 uniform float uAspect, uZoom, uGloss, uDispersion, uTransparent;
 uniform vec2 uPan;
@@ -82,50 +80,49 @@ float psi(vec2 p) {
 // Water is driven off the antinodes and collects along the NODAL lines, so
 // thickness is high where |psi| is small. The band widens with amplitude:
 // louder sound sweeps liquid out of a larger area and into the figure.
-// Polynomial smooth minimum: blending circle SDFs with this rather than a
-// hard min is what produces the tapered necks between lobes.
-float sminf(float a, float b, float k) {
-  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
-  return mix(b, a, h) - k * h * (1.0 - h);
+
+// ── Metaball Cymatic ───────────────────────────────────────────────────
+//
+// ⚠ MIRRORS js/metafield.js. Change them together.
+//
+// Circular FILLET union, not a polynomial smooth-min: a fillet cuts a concave
+// tangent arc in the corner where two surfaces meet, which is the hourglass
+// waist this look is built on. smin bulges convexly there and reads as soap
+// bubbles.
+float unionRoundf(float d1, float d2, float kf) {
+  if (kf <= 0.0) return min(d1, d2);
+  vec2 u = max(vec2(kf - d1, kf - d2), 0.0);
+  return max(kf, min(d1, d2)) - length(u);
 }
 
-// Split from its threshold so the Form ramp can blend distances rather than
-// masks — see blobDist() in js/cymafield.js for why that matters.
-float blobDist(vec2 p) {
-  float d = length(p - uBlob[0].xy) - uBlob[0].z;
-  for (int i = 1; i < 10; i++) {
-    if (i >= uBlobN) break;
-    d = sminf(d, length(p - uBlob[i].xy) - uBlob[i].z, uBlobK);
+// Approximate ellipse SDF. Exact for circles and close enough for the modest
+// ratios the generator allows; the exact form needs an iterative root solve.
+float sdEllipsef(vec2 p, vec2 r, float rot) {
+  float ca = cos(-rot), sa = sin(-rot);
+  vec2 q = vec2(p.x * ca - p.y * sa, p.x * sa + p.y * ca);
+  float k1 = length(q / r);
+  float k2 = length(q / (r * r));
+  if (k2 == 0.0) return -min(r.x, r.y);
+  return (k1 - 1.0) * (k1 / k2);
+}
+
+// Fillet union WITHIN a cluster, plain min ACROSS clusters. That split is what
+// makes connection a decision rather than an accident of overlap: forms in one
+// cluster grow a neck, forms in different clusters never touch however close
+// the composition packs them.
+float metaDistf(vec2 p) {
+  float best = 1e9;
+  for (int c = 0; c < 8; c++) {
+    float dc = 1e9;
+    for (int i = 0; i < 14; i++) {
+      if (i >= uMetaN) break;
+      if (int(uMetaRC[i].y) != c) continue;
+      float d = sdEllipsef(p - uMeta[i].xy, uMeta[i].zw, uMetaRC[i].x);
+      dc = (dc > 1e8) ? d : unionRoundf(dc, d, uMetaK);
+    }
+    best = min(best, dc);
   }
-  return d;
-}
-
-float blobAt(vec2 p) {
-  return 1.0 - smoothstep(-0.012, 0.012, blobDist(p));
-}
-
-// The organism, sampled from its baked grid. The decode MIRRORS
-// unpackDistance() in js/sdftex.js — one format, split across two languages.
-// texture2D already returns 0-1 floats, so the JS side's /255 is applied for
-// us and this is (r + g/255) * 2*RANGE - RANGE with RANGE = 2.
-float organismDist(vec2 p) {
-  // The bake covers x in [-aspect, aspect] and y in [-1, 1], but p spans
-  // +-3.15/2 down the viewport at zoom 1. Without this divide the organism
-  // would occupy the middle 63% of the frame and everything past it would be
-  // CLAMP_TO_EDGE smear — flat cuts where the form should keep going.
-  // Mirrors ORG_SPAN in js/cymafield.js.
-  vec2 q = p / 1.575;
-  float a = uOrgSize.x / uOrgSize.y;
-  vec2 uv = vec2((q.x / a + 1.0) * 0.5, (1.0 - q.y) * 0.5);
-  // Past the bake, report "far outside" rather than sampling. CLAMP_TO_EDGE
-  // would repeat the outermost row and smear it across the rest of the view
-  // whenever the frame shows more world than the bake covers — which the
-  // chrome inset alone does, at zoom 0.52. bake()'s own sample() returns FAR
-  // here for the same reason; this keeps the GPU honest with the CPU.
-  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 10.0;
-  vec4 t = texture2D(uOrganism, uv);
-  // Back to world units, since q was scaled down to reach the bake.
-  return ((t.r + t.g / 255.0) * 4.0 - 2.0) * 1.575;
+  return best;
 }
 
 float nodalAt(vec2 p) {
@@ -160,29 +157,9 @@ float nodalAt(vec2 p) {
   float soft = 0.10 * (1.0 + uSimple);
   float lobe = smoothstep(thr - soft, thr + soft, f);
   float T = mix(line, lobe, uMass);
-  // Cross-fade to the metaball form: a modal field cannot produce a single
-  // fat multi-armed blob at any setting, so that shape is built directly and
-  // blended in. In between, the cymatic figure still reads through it.
-  // smoothstep, not linear: a linear blend leaves a visible ghost web
-  // behind the blob at Form 0.85-0.95.
-  // The Form ramp, hinged at 0.5 — mirrors nodalThickness() in js/cymafield.js.
-  //   0.0 -> 0.5  cymatic field -> blob   (mask blend)
-  //   0.5 -> 1.0  blob -> organism        (DISTANCE blend, thresholded once)
-  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, min(1.0, uForm * 2.0)));
-
-  if (uForm > 0.5 && uHasOrganism > 0.5) {
-    float upper = smoothstep(0.0, 1.0, (uForm - 0.5) * 2.0);
-    float d = mix(blobDist(p), organismDist(p), upper);
-    // One pixel of transition, no more. This is what makes the upper half
-    // crisp where blending thresholded masks smears over tens of pixels.
-    T = 1.0 - smoothstep(-uPxWorld, uPxWorld, d);
-  }
-  // The dish edge is released as Form crosses into the organism — see the
-  // matching comment in nodalThickness(). Without this the organism is trapped
-  // in a disc and cannot run off the frame.
-  float plate = 1.0 - smoothstep(1.02, 1.30, length(p));
-  float release = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
-  return T * mix(plate, 1.0, release);
+  // Soft plate boundary — the dish edge, not a hard crop. A Chladni figure
+  // lives on a physical plate and must end at its rim.
+  return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
 }
 
 // Emergence mask. The figure floods outward from the centre, so a design
@@ -190,13 +167,14 @@ float nodalAt(vec2 p) {
 // At uGrow = 0 nothing is visible — that is the resting state now, instead of
 // a scatter of unrelated droplets sitting over the figure.
 float waterAt(vec2 p) {
-  // Released for the organism, exactly as the plate edge is — mirrors
-  // reveal() in js/cymafield.js. This is a fixed radius in WORLD units, but
-  // how much world is on screen depends on zoom, so no constant widening
-  // covers every zoom.
+  // Two generators, routed — not blended. Metaball Cymatic is exempt from the
+  // emergence mask: that mask is a fixed radius in WORLD units while how much
+  // world is on screen depends on zoom, and a composition whose language is
+  // forms running off the frame cannot be bounded by a circle.
+  if (uMode > 0.5) {
+    return clamp(1.0 - smoothstep(-uPxWorld, uPxWorld, metaDistf(p)), 0.0, 1.0);
+  }
   float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
-  float revRelease = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
-  reveal = mix(reveal, 1.0, revRelease);
   return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }
 
@@ -238,12 +216,15 @@ void main() {
     float gmag = max(length(grad) / (2.0 * px), 1e-4);
     float dEdge = abs(T - 0.08) / gmag;
 
-    float d = mix(dCentre, dEdge, uForm);
+    // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
+    // boundary draws both sides of every line and every curve arrives doubled.
+    // A metaball has no spine, so it keeps its boundary.
+    float d = mix(dCentre, dEdge, uMode);
 
     // Gate by water PRESENCE as a multiplier, not by dividing the distance:
     // the division let isolated points where the field grazes zero outside
     // the figure sneak through as speckle dots across the plate.
-    float wet = mix(smoothstep(0.04, 0.12, T), 1.0, uForm);
+    float wet = mix(smoothstep(0.04, 0.12, T), 1.0, uMode);
     float line = (1.0 - smoothstep(uLineW * 0.5, uLineW, d)) * wet;
     gl_FragColor = mix(vec4(mix(uGround, uInk, line), 1.0), vec4(uInk, line), uTransparent);
     return;

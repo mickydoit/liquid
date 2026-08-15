@@ -1,6 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=ac347946';
-import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=ac347946';
-import { packSDF } from './sdftex.js?v=ac347946';
+import { VERT, FRAG } from './shader.js?v=b7cdba0d';
+import { stepGrow, isMeta } from './cymafield.js?v=b7cdba0d';
+import { metaSolve, META_MAX } from './metafield.js?v=b7cdba0d';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -12,10 +12,11 @@ const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
-  'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass', 'uForm', 'uBlob', 'uBlobN', 'uBlobK',
+  'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass',
+  'uMeta', 'uMetaRC', 'uMetaN', 'uMetaK', 'uMode',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
-  'uOrganism', 'uOrgSize', 'uHasOrganism', 'uPxWorld',
+  'uPxWorld',
 ];
 
 function compile(gl, type, src) {
@@ -72,8 +73,6 @@ export class LiquidRenderer {
     // Exports must not inherit it — see renderToCanvas.
     this.inset = [0, 0];
     this.insetZoom = 1;
-    this._orgTex = null;
-    this._orgSize = [1, 1];
     // Global scalar on material time: 1 while live, and the Motion control
     // while a design is held still. 0 freezes it completely.
     this.materialRate = 1;
@@ -134,32 +133,6 @@ export class LiquidRenderer {
     }
     this._dirty = true;
   }
-  // The organism arrives as a baked signed-distance grid rather than as GLSL.
-  // Keeping one CPU implementation is the point: a GLSL port would be a second
-  // source of truth, and bake()'s morphology cleanup — which is what produces
-  // the clean poster silhouettes — has no fragment-shader equivalent, so a
-  // ported preview would systematically differ from the export.
-  setOrganismSDF(grid, w, h) {
-    const gl = this.gl;
-    if (this._orgTex) { gl.deleteTexture(this._orgTex); this._orgTex = null; }
-    if (grid) {
-      const t = gl.createTexture();
-      gl.bindTexture(gl.TEXTURE_2D, t);
-      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA,
-                    gl.UNSIGNED_BYTE, packSDF(grid, w, h));
-      // LINEAR so the distance interpolates between cells: that is what lets a
-      // 256-cell bake hold a clean edge well past 1:1 zoom.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      this._orgTex = t;
-      this._orgSize = [w, h];
-    }
-    this._dirty = true;
-  }
-
   setFrameSink(fn) { this._frameSink = fn; }
 
   // `useInset` is false for exports: the chrome offset exists to dodge the
@@ -183,22 +156,31 @@ export class LiquidRenderer {
     gl.uniform1f(u.uSimple, s.simple ?? 0);
     gl.uniform1f(u.uSwell, s.swell ?? 0);
     gl.uniform1f(u.uMass, s.mass ?? 0);
-    gl.uniform1f(u.uForm, s.form ?? 0);
-    // Only rebuild the circles when the form is actually in play.
-    if (s.form > 0) {
-      const cs = blobCircles(s);
-      const arr = this._blobArr || (this._blobArr = new Float32Array(BLOB_MAX * 3));
-      arr.fill(0);
-      const n = Math.min(cs.length, BLOB_MAX);
+    // Metaball Cymatic. The composition is analytic — a handful of ellipses
+    // and their cluster ids — so it goes to the GPU as uniforms rather than as
+    // a baked texture, and the CPU and GLSL stay mirrored the way the rest of
+    // this file already is. metaSolve() memoises, so this is a lookup per frame
+    // rather than a re-solve.
+    const meta = isMeta(s);
+    gl.uniform1f(u.uMode, meta ? 1 : 0);
+    if (meta) {
+      const { balls, fillet } = metaSolve(s);
+      const xy = this._metaArr || (this._metaArr = new Float32Array(META_MAX * 4));
+      const rc = this._metaRC || (this._metaRC = new Float32Array(META_MAX * 2));
+      xy.fill(0); rc.fill(0);
+      const n = Math.min(balls.length, META_MAX);
       for (let i = 0; i < n; i++) {
-        arr[i * 3] = cs[i].x; arr[i * 3 + 1] = cs[i].y; arr[i * 3 + 2] = cs[i].r;
+        const b = balls[i];
+        xy[i * 4] = b.x; xy[i * 4 + 1] = b.y; xy[i * 4 + 2] = b.rx; xy[i * 4 + 3] = b.ry;
+        rc[i * 2] = b.rot; rc[i * 2 + 1] = b.cluster;
       }
-      gl.uniform3fv(u.uBlob, arr);
-      gl.uniform1i(u.uBlobN, n);
-      gl.uniform1f(u.uBlobK, 0.15 + 0.08 * (1 - (s.simple ?? 0)));
+      gl.uniform4fv(u.uMeta, xy);
+      gl.uniform2fv(u.uMetaRC, rc);
+      gl.uniform1i(u.uMetaN, n);
+      gl.uniform1f(u.uMetaK, fillet);
     } else {
-      gl.uniform1i(u.uBlobN, 1);
-      gl.uniform1f(u.uBlobK, 0.2);
+      gl.uniform1i(u.uMetaN, 0);
+      gl.uniform1f(u.uMetaK, 0.1);
     }
     gl.uniform1f(u.uHasBack, this._backTex ? 1 : 0);
     if (this._backTex) {
@@ -223,13 +205,6 @@ export class LiquidRenderer {
     gl.uniform3fv(u.uInk, st.ink);
     gl.uniform3fv(u.uDeep, st.deep);
 
-    gl.uniform1f(u.uHasOrganism, this._orgTex ? 1 : 0);
-    gl.uniform2fv(u.uOrgSize, this._orgSize);
-    if (this._orgTex) {
-      gl.activeTexture(gl.TEXTURE1);
-      gl.bindTexture(gl.TEXTURE_2D, this._orgTex);
-      gl.uniform1i(u.uOrganism, 1);
-    }
     // One pixel in WORLD units, computed rather than taken from fwidth: fwidth
     // needs OES_standard_derivatives on WebGL1, the same extension-availability
     // trap as float textures. main() maps p = (vUv - 0.5 - uPan) * 3.15 / uZoom

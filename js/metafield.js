@@ -17,9 +17,9 @@
 // a concave tangent arc in the corner where two surfaces meet, which is the
 // narrow hourglass waist the reference shows. `smin` bulges convexly there and
 // reads as soap bubbles — the single most load-bearing detail in this look.
-import { psi } from './cymafield.js';
-import { unionRound, makeRng } from './blobfield.js';
-import { fnv1a } from './hash.js';
+import { psi } from './cymafield.js?v=b7cdba0d';
+import { unionRound, makeRng } from './blobfield.js?v=b7cdba0d';
+import { fnv1a } from './hash.js?v=b7cdba0d';
 
 export const META_MAX = 14;
 export const META_CLUSTER_MAX = 8;

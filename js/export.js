@@ -1,62 +1,32 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=ac347946';
-import { makeWaterField, makeCentrelineField, ORG_SPAN } from './cymafield.js?v=ac347946';
-import { makeOrganismCache } from './organism.js?v=ac347946';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=b7cdba0d';
+import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=b7cdba0d';
 
-// The long edge of an export-resolution organism bake. ~270 ms, which is fine
-// for a one-off export and far too slow for the preview — hence two
-// resolutions and two caches.
-const EXPORT_RES = 900;
-
-// Vector export.
+// How far past the page a metaball composition is contoured.
 //
-// This is not a trace of a rasterisation. The water's outline is analytic —
-// an isocontour of the same field the shader draws — so these paths ARE the
-// shape, contoured on the CPU at whatever resolution is asked for and fitted
-// with periodic beziers. Small files, smooth curves, genuinely editable.
-
-function hexToRgb(hex) {
-  const h = hex.replace('#', '');
-  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-}
-
-// Export-resolution bakes, kept separate from the preview's cache so a single
-// export cannot evict the 256 grid the screen is still drawing from.
-const exportCache = makeOrganismCache();
-
-// How far past the page the organism is contoured. The composition runs off
-// the frame, so its contour reaches the domain edge — and a contour cut by the
-// edge is an OPEN curve, which ringToPath closes with a straight chord.
-// Under an even-odd fill those chords invert whole regions, which is the
-// diagonal wedge this guard band removes. Contouring wider lets every loop
-// close outside the page instead, where it is simply cropped.
-//
-// The cymatic field never hit this: its plate mask faded the field to zero
-// before the domain edge, so every loop was already closed well inside.
+// Its forms run off the frame, so contours reach the domain edge — and a
+// contour cut by the edge is an OPEN curve that ringToPath closes with a
+// straight chord, which an even-odd fill then inverts into a wedge across the
+// design. Contouring wider lets every loop close outside the page, where it is
+// simply cropped. The overhang stays in the file, which is what a printer
+// wants for bleed. Detailed Cymatic never hits this: its plate mask closes
+// every loop well inside the edge.
 const GUARD = 1.08;
 
-// The organism's export frame, or null if this design is not one.
+// The metaball composition's export frame, or null for Detailed Cymatic.
 //
 // Shared by SVG and PDF: they contour identically and differ only in how they
-// write the result, so a frame fix applied to one and not the other would show
-// up as a PDF that does not match its SVG.
-function organismFrame(state, width, height) {
-  if ((state.form ?? 0) <= 0.5 || !state.organismSource) return null;
-  const { seed, controls } = state.organismSource;
+// write the result, so a frame fix applied to one and not the other shows up
+// as a PDF that does not match its SVG.
+function metaFrame(state, width, height) {
+  if (!isMeta(state)) return null;
   const aspect = width / height;
-  // The organism's frame IS its bake domain. fieldOutline otherwise defaults
-  // to a SQUARE +-1.35 fitted into the page, which letterboxes a portrait
-  // export and slices the composition where the contour meets the bake edge.
-  const sx = aspect * ORG_SPAN * GUARD, sy = ORG_SPAN * GUARD;
+  // fieldOutline otherwise defaults to a SQUARE +-1.35 fitted into the page,
+  // which letterboxes a portrait export and crops the composition.
+  const sx = aspect * 1.35 * GUARD, sy = 1.35 * GUARD;
   return {
-    // Re-baked at export resolution: the preview bakes at 256 for speed, and
-    // emitting that grid would ship a visibly coarser silhouette than the
-    // design approved on screen.
-    state: Object.assign({}, state, {
-      organism: exportCache.request(seed, controls, EXPORT_RES, aspect),
-    }),
     bounds: { x0: -sx, x1: sx, y0: -sy, y1: sy },
-    // Bounds and pixel size are scaled together, so the scale is unchanged and
-    // the guard band lands outside the page. This shifts it back.
+    // Bounds and pixel size scale together, so the scale is unchanged and the
+    // guard band lands outside the page. This shifts it back.
     dx: ((GUARD - 1) / 2) * width,
     dy: ((GUARD - 1) / 2) * height,
     width: width * GUARD,
@@ -65,13 +35,9 @@ function organismFrame(state, width, height) {
 }
 
 export function buildSVG({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
-  // Re-bake the organism at export resolution. The preview bakes at 256 for
-  // speed; emitting that grid would ship a visibly coarser silhouette than the
-  // design the user approved on screen.
-  // An explicit view rectangle still wins over the organism's own frame — the
-  // user's on-screen framing is the later decision.
-  const org = bounds ? null : organismFrame(state, width, height);
-  if (org) state = org.state;
+  // An explicit view rectangle still wins over the composition's own frame —
+  // the user's on-screen framing is the later decision.
+  const org = bounds ? null : metaFrame(state, width, height);
   // `bounds` is the on-screen view rectangle. Passing it is what keeps a
   // zoomed or panned SVG framed the same as the canvas; without it the vector
   // output would silently ignore the user's framing. margin 0 because the
@@ -82,7 +48,10 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
   // The outline traces the CENTRELINE, matching the on-screen outline view —
   // tracing the water's boundary draws both sides of every ribbon and every
   // curve arrives doubled. A blob has no spine, so it keeps its boundary.
-  const field = (variant === 'outline' && (state.form ?? 0) < 0.5)
+  // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
+  // boundary draws both sides of every line and every curve arrives doubled.
+  // A metaball has no spine, so it keeps its boundary.
+  const field = (variant === 'outline' && !isMeta(state))
     ? makeCentrelineField(state) : makeWaterField(state);
   const { rings } = fieldOutline(field, opts);
   const paths = rings.map((r, i) =>
@@ -110,15 +79,17 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
 
 export function exportPDF({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
   const { jsPDF } = window.jspdf;
-  // Same frame treatment as buildSVG — see organismFrame(). Kept in step
+  // Same frame treatment as buildSVG — see metaFrame(). Kept in step
   // deliberately: a PDF framed differently from its SVG is the kind of bug
   // that only shows up at the printer.
-  const org = bounds ? null : organismFrame(state, width, height);
-  if (org) state = org.state;
+  const org = bounds ? null : metaFrame(state, width, height);
   const opts = org
     ? { width: org.width, height: org.height, bounds: org.bounds, margin: 0 }
     : bounds ? { width, height, bounds, margin: 0 } : { width, height };
-  const field = (variant === 'outline' && (state.form ?? 0) < 0.5)
+  // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
+  // boundary draws both sides of every line and every curve arrives doubled.
+  // A metaball has no spine, so it keeps its boundary.
+  const field = (variant === 'outline' && !isMeta(state))
     ? makeCentrelineField(state) : makeWaterField(state);
   let { rings } = fieldOutline(field, opts);
   // Shift the guard band off the page before anything is measured in mm.
