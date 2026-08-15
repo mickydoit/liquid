@@ -25,6 +25,8 @@ uniform vec4 uMeta[14];     // xy = centre, zw = ellipse radii
 uniform vec2 uMetaRC[14];   // x = rotation, y = cluster id
 uniform int uMetaN;
 uniform float uMetaK;       // fillet radius for necks within a cluster
+uniform float uMetaBlend;   // 0 = concave fillet waist, 1 = broad flowing union
+uniform float uMetaScale;   // Scale/crop, a true zoom of the finished artwork
 uniform float uMode;        // 0 = Detailed Cymatic, 1 = Metaball Cymatic
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
@@ -110,7 +112,26 @@ float sdEllipsef(vec2 p, vec2 r, float rot) {
 // makes connection a decision rather than an accident of overlap: forms in one
 // cluster grow a neck, forms in different clusters never touch however close
 // the composition packs them.
-float metaDistf(vec2 p) {
+// Polynomial smooth minimum — the convex, flowing union.
+float sminf(float a, float b, float k) {
+  if (k <= 0.0) return min(a, b);
+  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);
+  return mix(b, a, h) - k * h * (1.0 - h);
+}
+
+// Fillet at low Merge for a narrow hourglass waist, smin at high Merge for a
+// broad flowing join. Fillet alone exaggerates the pinch into peanuts; smin
+// alone dissolves the lobes into one oval.
+float clusterUnionf(float d1, float d2) {
+  float f = unionRoundf(d1, d2, uMetaK);
+  float sm = sminf(d1, d2, uMetaK * mix(1.5, 3.2, uMetaBlend));
+  return mix(f, sm, uMetaBlend);
+}
+
+float metaDistf(vec2 q) {
+  // Scale/crop is a TRUE zoom: evaluate at p/S and scale the result by S, so
+  // positions, radii and necks all enlarge together.
+  vec2 p = q / uMetaScale;
   float best = 1e9;
   for (int c = 0; c < 8; c++) {
     float dc = 1e9;
@@ -118,11 +139,11 @@ float metaDistf(vec2 p) {
       if (i >= uMetaN) break;
       if (int(uMetaRC[i].y) != c) continue;
       float d = sdEllipsef(p - uMeta[i].xy, uMeta[i].zw, uMetaRC[i].x);
-      dc = (dc > 1e8) ? d : unionRoundf(dc, d, uMetaK);
+      dc = (dc > 1e8) ? d : clusterUnionf(dc, d);
     }
     best = min(best, dc);
   }
-  return best;
+  return best * uMetaScale;
 }
 
 float nodalAt(vec2 p) {

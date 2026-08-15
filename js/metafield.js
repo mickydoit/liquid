@@ -1,48 +1,50 @@
-// Metaball Cymatic — several rounded forms, some separate, some joined by
-// smooth liquid necks.
+// Metaball Cymatic — a few large liquid forms, some joined, some separate.
 //
-// The geometry is NOT the nodal field. A modal field is used only as a
-// SCAFFOLD: its antinodes are a naturally cymatic arrangement of well-spaced
-// points, and a handful of those become the centres of circles and restrained
-// ellipses. Rendering the field itself gives a dense cellular network, which is
-// the opposite of the intended silhouette.
+// The cymatic field places MACRO-CLUSTER centres, not individual primitives.
+// Sampling one antinode per circle is what produced bead chains: a modal
+// lattice is regularly spaced, so nearest-neighbour joining over it can only
+// ever thread the points into necklaces. Here the field decides where three to
+// seven COMPOSITIONAL masses sit, and each mass is then built from one to three
+// large primitives arranged compactly around its own centre.
 //
-// Nor is it one organism with arms. There is no skeleton and no hub: every form
-// is an independent rounded primitive, and connection is decided per PAIR by
-// the Merge control rather than emerging from a shared centre. That is the
-// difference between "several rounded lobes joined by waists" and "spikes
-// radiating from a middle".
+// Merge changes NECK GEOMETRY, never membership. Cluster membership is fixed by
+// the seed and Circle count, so raising Merge widens the waists that exist
+// instead of growing longer chains.
 //
-// Joins use a circular FILLET union, not a polynomial smooth-min. A fillet adds
-// a concave tangent arc in the corner where two surfaces meet, which is the
-// narrow hourglass waist the reference shows. `smin` bulges convexly there and
-// reads as soap bubbles — the single most load-bearing detail in this look.
-import { psi } from './cymafield.js?v=b7cdba0d';
-import { unionRound, makeRng } from './blobfield.js?v=b7cdba0d';
-import { fnv1a } from './hash.js?v=b7cdba0d';
+// The union is a blend of two operators, chosen by Merge:
+//   fillet — a concave tangent arc, the narrow hourglass waist
+//   smin   — a convex bulge, a broad flowing union
+// Fillet alone exaggerates the pinch and reads as peanuts; smin alone loses the
+// lobes to soap bubbles. The blend keeps lobes legible while letting the
+// transition broaden.
+import { psi } from './cymafield.js?v=e10531ff';
+import { unionRound, makeRng } from './blobfield.js?v=e10531ff';
+import { fnv1a } from './hash.js?v=e10531ff';
 
 export const META_MAX = 14;
 export const META_CLUSTER_MAX = 8;
 
 export function defaultMeta() {
   return {
-    count: 0.45,     // 5 -> 14 forms
-    order: 0.40,     // complexity of the scaffold the centres are drawn from
-    merge: 0.50,     // how many neighbouring forms connect
-    spacing: 0.50,   // distance between forms
-    sizeVar: 0.50,   // consistent radii -> strongly varied
-    stretch: 0.25,   // circles -> restrained ellipses
-    symmetry: 0.50,  // ordered cymatic balance -> controlled asymmetry
-    scaleCrop: 1.0,  // >1 enlarges the composition so forms leave the frame
+    count: 0.5,      // primitive count, ~6 -> ~12
+    order: 0.4,      // complexity of the scaffold placing the macro clusters
+    merge: 0.5,      // neck width: narrow hourglass -> broad flowing union
+    spacing: 0.5,    // distance between cluster centres
+    sizeVar: 0.55,   // consistent masses -> one dominant, several small
+    stretch: 0.3,    // circles -> capsules and teardrops
+    symmetry: 0.45,  // ordered cymatic balance -> controlled asymmetry
+    scaleCrop: 1.0,  // a true zoom of the finished artwork
   };
 }
 
 const clamp01 = (v) => (v < 0 ? 0 : v > 1 ? 1 : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 
-// How the sound reaches the composition. Each feature drives one property, and
-// each is a CENTRE the slider sets — the audio deviates around it — so a
-// control still does what it says while the design stays sound-derived.
+// Fraction of the frame the composition's bounding box should span. The old
+// generator drifted to whatever the scaffold happened to give, which was a
+// small cluster of dots in the middle of a large empty canvas.
+const TARGET_COVER = 0.86;
+
 function resolved(s) {
   const m = Object.assign(defaultMeta(), s.meta);
   const f = s.features ?? {};
@@ -52,34 +54,32 @@ function resolved(s) {
   const rms = clamp01(f.rms ?? 0.3);
   const conf = clamp01(f.pitchConf ?? 0.5);
   return {
-    // Sound complexity -> how many forms.
-    count: clamp01(m.count + (centroid - 0.5) * 0.3),
-    // Spectral centroid -> scaffold order (detail).
-    order: clamp01(m.order + (centroid - 0.5) * 0.4),
+    count: clamp01(m.count + (centroid - 0.5) * 0.25),
+    order: clamp01(m.order + (centroid - 0.5) * 0.35),
     merge: clamp01(m.merge),
     spacing: clamp01(m.spacing),
-    // Noisiness -> size variation.
-    sizeVar: clamp01(m.sizeVar + (spread - 0.5) * 0.4),
+    sizeVar: clamp01(m.sizeVar + (spread - 0.5) * 0.35),
     stretch: clamp01(m.stretch),
-    // Confident, tonal input reads as more ordered.
-    symmetry: clamp01(m.symmetry + (conf - 0.5) * 0.4),
-    scaleCrop: Math.max(0.4, m.scaleCrop),
-    // Amplitude -> liquid mass.
-    mass: lerp(0.85, 1.25, rms),
-    // Pitch -> the scaffold's spatial topology.
+    symmetry: clamp01(m.symmetry + (conf - 0.5) * 0.35),
+    scaleCrop: Math.max(0.3, m.scaleCrop),
+    mass: lerp(0.9, 1.15, rms),
     pitch,
+    // The canvas is a rectangle and the artwork should use it. Without this the
+    // composition is laid out in a square and sits inside an invisible plate.
+    aspect: s.aspect && s.aspect > 0 ? s.aspect : 0.78,
   };
 }
 
-// The scaffold state: a LOW-order modal field, deliberately far below the one
-// Detailed Cymatic draws. Its antinodes are what the centres are sampled from.
+// The scaffold. Deliberately square-plate dominant: the radial membrane term
+// arranges its antinodes in concentric rings, which is exactly the "obvious
+// radial wheel" this composition must not read as.
 function scaffoldState(c) {
   return {
-    m: lerp(1.6, 4.2, c.order) + c.pitch * 1.4,
-    n: lerp(1.2, 3.4, c.order) + c.pitch * 0.9,
-    kr: lerp(2.0, 5.0, c.order),
-    ma: lerp(1.0, 3.4, c.order),
-    mix: lerp(0.15, 0.75, c.pitch),
+    m: lerp(1.5, 3.6, c.order) + c.pitch * 1.2,
+    n: lerp(1.1, 2.9, c.order) + c.pitch * 0.7,
+    kr: lerp(1.8, 4.0, c.order),
+    ma: lerp(0.9, 2.6, c.order),
+    mix: lerp(0.05, 0.34, c.pitch),
     amp: 0.5, fine: 0, chaos: 0, phase: 0, simple: 0,
     ripAmt: 0, ripT: 9, t: 0,
   };
@@ -93,211 +93,257 @@ export function metaSeed(s) {
   return (fnv1a(key) ^ Math.imul((s.variation ?? 0) >>> 0, 0x9e3779b1)) >>> 0;
 }
 
-// Local maxima of |psi| on a coarse grid. These are the antinodes — the plate's
-// loudest points — and they sit in a naturally cymatic, well-spaced lattice, so
-// the composition reads as sound-derived without the field being drawn.
-function antinodes(c) {
+// Macro-cluster centres: local maxima of |psi| over a RECTANGULAR domain
+// matching the canvas, so the composition spans the frame it will be seen in.
+function clusterCentres(c, want) {
   const sc = scaffoldState(c);
-  const N = 46;
-  const span = 1.15;
+  const N = 40;
+  const ax = c.aspect >= 1 ? 1.2 : 1.2 * c.aspect;
+  const ay = c.aspect >= 1 ? 1.2 / c.aspect : 1.2;
   const at = (i, j) => {
-    const x = -span + (2 * span * i) / (N - 1);
-    const y = -span + (2 * span * j) / (N - 1);
+    const x = -ax + (2 * ax * i) / (N - 1);
+    const y = -ay + (2 * ay * j) / (N - 1);
     return { x, y, v: Math.abs(psi(x, y, sc)) };
   };
-  const out = [];
+  const peaks = [];
   for (let j = 1; j < N - 1; j++) {
     for (let i = 1; i < N - 1; i++) {
       const p = at(i, j);
-      let peak = true;
-      for (let dj = -1; dj <= 1 && peak; dj++) {
+      let top = true;
+      for (let dj = -1; dj <= 1 && top; dj++) {
         for (let di = -1; di <= 1; di++) {
           if (!di && !dj) continue;
-          if (at(i + di, j + dj).v > p.v) { peak = false; break; }
+          if (at(i + di, j + dj).v > p.v) { top = false; break; }
         }
       }
-      if (peak) out.push(p);
+      if (top) peaks.push(p);
     }
   }
-  // Strongest first, so raising Circle count ADDS weaker forms rather than
-  // reshuffling the ones already there.
-  out.sort((a, b) => b.v - a.v || a.x - b.x || a.y - b.y);
+  peaks.sort((a, b) => b.v - a.v || a.x - b.x || a.y - b.y);
+
+  const sep = lerp(0.30, 0.56, c.spacing);
+  const out = [];
+  for (const p of peaks) {
+    if (out.length >= want) break;
+    if (out.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= sep)) out.push(p);
+  }
+  for (let relax = 0.8; out.length < want && relax > 0.25; relax -= 0.12) {
+    for (const p of peaks) {
+      if (out.length >= want) break;
+      if (out.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= sep * relax)) out.push(p);
+    }
+  }
   return out;
 }
 
-// The forms. Deterministic in (features, variation, controls).
-export function metaBalls(s) {
+// One macro-cluster's primitives, arranged COMPACTLY around its centre.
+//
+// Never collinear for k = 3: three primitives in a line is the bead chain in
+// miniature. A triangle or curved fan reads as one broad mass instead.
+function buildCluster(cx, cy, k, R, rot, c, rng) {
+  const out = [];
+  const ecc = 1 + c.stretch * 0.85 * (0.45 + rng() * 0.55);
+  const mk = (x, y, r, extra = 1) => ({
+    x, y,
+    rx: r * ecc * extra,
+    ry: (r / Math.sqrt(ecc)) * extra,
+    rot: rot + (rng() - 0.5) * 0.7,
+  });
+
+  if (k === 1) {
+    out.push(mk(cx, cy, R));
+    return out;
+  }
+  if (k === 2) {
+    // A pair sits close enough that the union reads as one capsule or hourglass
+    // rather than two circles that happen to touch.
+    // Lobe separation is what makes the neck legible, and it has to be measured
+    // against the ACTUAL semi-axes along the join. Deriving it from the cluster
+    // radius R looks equivalent but is not: `ecc` inflates rx above R, so the
+    // real overlap came out around a third and the waist all but vanished.
+    // Merge deepens the overlap; it never closes the waist.
+    const rA = R * lerp(1, 0.82, rng() * 0.6);
+    const rB = R * lerp(1, 0.82, rng() * 0.6);
+    const d = (rA + rB) * ecc * lerp(0.90, 0.74, c.merge);
+    const a = rot;
+    const dx = Math.cos(a) * d * 0.5, dy = Math.sin(a) * d * 0.5;
+    out.push(mk(cx - dx, cy - dy, rA));
+    out.push(mk(cx + dx, cy + dy, rB));
+    return out;
+  }
+  // k === 3: a triangle or curved fan. The base angle is seeded and the three
+  // offsets are spread over ~200 degrees, so they cannot collapse to a line.
+  const d = R * lerp(1.55, 1.20, c.merge);
+  const sweep = lerp(2.1, 3.5, rng());
+  for (let i = 0; i < 3; i++) {
+    const a = rot + (i - 1) * (sweep / 2) + (rng() - 0.5) * 0.35;
+    const rr = d * (0.55 + rng() * 0.5);
+    out.push(mk(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr,
+                R * lerp(0.72, 1.05, rng())));
+  }
+  return out;
+}
+
+// The composition, before Scale/crop. Deterministic in (features, variation,
+// controls, aspect).
+function layout(s) {
   const c = resolved(s);
   const rng = makeRng(metaSeed(s));
-  const want = Math.round(lerp(5, META_MAX, c.count));
 
-  // Selection separation depends on the form COUNT alone, never on Spacing or
-  // Merge. Those controls must move the forms that exist, not silently swap
-  // which peaks were chosen — a slider that reshuffles the composition is
-  // indistinguishable from a reroll.
-  const sep = lerp(0.30, 0.17, c.count);
+  // 3-7 macro components built from ~6-12 primitives.
+  const nClusters = Math.round(lerp(3, 7, c.count * 0.85 + 0.1));
+  const centres = clusterCentres(c, nClusters);
 
-  const peaks = antinodes(c);
-  const picked = [];
-  for (const p of peaks) {
-    if (picked.length >= want) break;
-    if (picked.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= sep)) picked.push(p);
-  }
-  // A sparse scaffold can run out of well-separated peaks before `want`. Relax
-  // the separation rather than return fewer forms than the control promises.
-  for (let relax = 0.85; picked.length < want && relax > 0.3; relax -= 0.15) {
-    for (const p of peaks) {
-      if (picked.length >= want) break;
-      if (picked.every((q) => Math.hypot(q.x - p.x, q.y - p.y) >= sep * relax)) picked.push(p);
+  // One cluster is deliberately dominant. "At least one form large enough to
+  // feel dominant" does not happen by chance when every radius is drawn from
+  // the same distribution.
+  const dominant = Math.floor(rng() * centres.length);
+
+  const balls = [];
+  const clusters = [];
+  centres.forEach((p, ci) => {
+    if (balls.length >= META_MAX - 1) return;
+    // Cluster size: singles and pairs are the common case, triples the accent.
+    const roll = rng();
+    let k = roll < 0.34 ? 1 : roll < 0.78 ? 2 : 3;
+    if (balls.length + k > META_MAX) k = 1;
+
+    // Scale varies per CLUSTER, not per primitive, so the size difference reads
+    // at the composition level rather than as noise inside one mass.
+    const big = ci === dominant;
+    const t = rng();
+    const scale = big ? lerp(1.30, 1.75, t)
+                      : lerp(1 - 0.55 * c.sizeVar, 1 + 0.20 * c.sizeVar, t);
+    const R = 0.46 * scale * c.mass;
+
+    const rot = rng() * Math.PI * 2;
+    const members = buildCluster(p.x, p.y, k, R, rot, c, rng);
+    const ids = [];
+    for (const b of members) {
+      b.cluster = Math.min(clusters.length, META_CLUSTER_MAX - 1);
+      ids.push(balls.length);
+      balls.push(b);
     }
-  }
-
-  const strongest = peaks.length ? peaks[0].v : 1;
-  return picked.map((p, i) => {
-    // Asymmetry: a seeded nudge off the scaffold, so the arrangement is
-    // cymatic in structure but not mechanically regular. Symmetry 1 keeps the
-    // scaffold exactly; 0 lets each centre wander.
-    const jit = (1 - c.symmetry) * 0.16;
-    // Spacing is applied HERE, as a scale on the arrangement, so it spreads the
-    // chosen forms apart instead of changing which forms were chosen.
-    const spread = lerp(0.82, 1.30, c.spacing);
-    const x = (p.x * spread + (rng() * 2 - 1) * jit) * c.scaleCrop;
-    const y = (p.y * spread + (rng() * 2 - 1) * jit) * c.scaleCrop;
-
-    // Radius follows the antinode's strength, so bigger forms land where the
-    // plate is loudest — varied scale that still means something.
-    const strength = strongest > 0 ? p.v / strongest : 1;
-    const base = lerp(0.135, 0.20, strength) * c.mass * lerp(1, 1.12, c.scaleCrop - 1);
-    const vary = 1 + (rng() * 2 - 1) * c.sizeVar * 0.55;
-    const r = Math.max(0.045, base * vary);
-
-    // Restrained ellipses only. Past ~2.6:1 a form stops reading as a lobe and
-    // starts reading as the spike this design exists to avoid, so the ratio is
-    // capped rather than left to the slider.
-    const e = 1 + c.stretch * 0.8 * (0.4 + rng() * 0.6);
-    const rot = rng() * Math.PI;
-    return { x, y, rx: r * e, ry: r / Math.sqrt(e), rot, i };
+    clusters.push(ids);
   });
-}
 
-// Which forms join. Union-find over nearest-neighbour pairs, shortest first, so
-// Merge grows connections in a stable order — raising it adds joins rather than
-// rearranging the ones already made.
-export function metaClusters(s) {
-  const c = resolved(s);
-  const balls = metaBalls(s);
-  const n = balls.length;
-
-  // "Neighbouring forms" is each form's two NEAREST, not everything inside some
-  // radius. A radius threshold makes the candidate set collapse as soon as
-  // Spacing or Size variation push the forms apart — at which point Merge 0.5
-  // has almost nothing to join and the percentage it reports is meaningless.
-  // A k-nearest graph is scale-free, so "30-60% of neighbours joined" means the
-  // same thing at every setting.
-  const seen = new Set();
-  const pairs = [];
-  for (let i = 0; i < n; i++) {
-    const near = [];
-    for (let j = 0; j < n; j++) {
-      if (i === j) continue;
-      near.push({ j, d: Math.hypot(balls[i].x - balls[j].x, balls[i].y - balls[j].y) });
-    }
-    near.sort((a, b) => a.d - b.d || a.j - b.j);
-    for (const { j, d } of near.slice(0, 2)) {
-      const key = i < j ? `${i},${j}` : `${j},${i}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      pairs.push({ i: Math.min(i, j), j: Math.max(i, j), d });
-    }
-  }
-  pairs.sort((a, b) => a.d - b.d || a.i - b.i || a.j - b.j);
-
-  const parent = balls.map((_, i) => i);
-  const find = (i) => { while (parent[i] !== i) { parent[i] = parent[parent[i]]; i = parent[i]; } return i; };
-  const size = balls.map(() => 1);
-
-  // The cap is what keeps this from becoming one fused organism at Merge 1.
-  // Clusters of two and three are the reference's language; a cluster holding
-  // half the design is the failure this whole rewrite is correcting.
-  const maxCluster = c.merge < 0.35 ? 2 : c.merge < 0.75 ? 3 : 4;
-  const target = Math.round(pairs.length * c.merge * 0.95);
-
-  // How many forms may end up inside a cluster at all. Without this second cap
-  // the greedy join chains every form into something and the design loses its
-  // separate circles — Merge 1 is specified to keep negative space, not to
-  // connect everything. It also keeps a mixture at the midpoint, which is what
-  // "balanced" means: several joined groups AND several forms left alone.
+  // Keep clusters clear of one another.
   //
-  // The curve is sqrt, not linear, because joins are not proportional to the
-  // forms recruited: a cluster of k costs k forms but yields only k-1 joins, so
-  // a linear cap undershoots the specified 30-60% badly at the midpoint.
-  const maxClustered = Math.round(n * 0.94 * Math.sqrt(c.merge));
-  let clustered = 0;
-
-  let joined = 0;
-  for (const p of pairs) {
-    if (joined >= target) break;
-    const a = find(p.i), b = find(p.j);
-    if (a === b) continue;
-    if (size[a] + size[b] > maxCluster) continue;
-    // Forms not already in a cluster that this join would recruit.
-    const recruits = (size[a] === 1 ? 1 : 0) + (size[b] === 1 ? 1 : 0);
-    if (clustered + recruits > maxClustered) continue;
-    parent[a] = b;
-    size[b] += size[a];
-    clustered += recruits;
-    joined++;
-  }
-
-  const groups = new Map();
-  for (let i = 0; i < n; i++) {
-    const r = find(i);
-    if (!groups.has(r)) groups.set(r, []);
-    groups.get(r).push(i);
-  }
-  const clusters = [...groups.values()];
-  // Stable ids, capped so the GLSL mirror's loop bound is a constant.
-  clusters.forEach((g, id) => g.forEach((i) => { balls[i].cluster = Math.min(id, META_CLUSTER_MAX - 1); }));
-
-  // Connection has to be built, not hoped for.
-  //
-  // A fillet only rounds a corner where two surfaces ALREADY meet; it cannot
-  // bridge a gap. So joined members are pulled together until they genuinely
-  // overlap, and unjoined neighbours are pushed apart until they genuinely do
-  // not. Without this the Merge control depends on whether the scaffold
-  // happened to place two peaks close enough, which is exactly the accidental
-  // behaviour this design is specified against.
-  for (let pass = 0; pass < 3; pass++) {
-    for (const p of pairs) {
-      const a = balls[p.i], b = balls[p.j];
-      const same = find(p.i) === find(p.j);
-      const ra = (a.rx + a.ry) / 2, rb = (b.rx + b.ry) / 2;
-      const dx = b.x - a.x, dy = b.y - a.y;
-      const d = Math.hypot(dx, dy) || 1e-6;
-      const ux = dx / d, uy = dy / d;
-      // Joined: overlap by ~18% of the summed radii, which is enough for the
-      // fillet to read as a waist rather than a tangent kiss.
-      // Unjoined: hold a gap of ~22%, so the negative space is unmistakable.
-      const wantD = same ? (ra + rb) * 0.82 : (ra + rb) * 1.22;
-      if ((same && d <= wantD) || (!same && d >= wantD)) continue;
-      const shift = (wantD - d) * 0.5;
-      a.x -= ux * shift; a.y -= uy * shift;
-      b.x += ux * shift; b.y += uy * shift;
+  // Different clusters are combined with a plain min, which cuts a SHARP
+  // concave notch wherever two of them overlap — a corner, in a design that
+  // must have none. Fitting the composition to the frame scales everything up
+  // and readily pushes clusters into contact, so the gap has to be enforced
+  // rather than assumed. Uniform scaling preserves it, so doing this before the
+  // fit is enough.
+  const info = clusters.map((ids) => {
+    let cx = 0, cy = 0;
+    for (const i of ids) { cx += balls[i].x; cy += balls[i].y; }
+    cx /= ids.length; cy /= ids.length;
+    let rad = 0;
+    for (const i of ids) {
+      const b = balls[i];
+      rad = Math.max(rad, Math.hypot(b.x - cx, b.y - cy) + Math.max(b.rx, b.ry));
+    }
+    return { ids, cx, cy, rad };
+  });
+  for (let pass = 0; pass < 6; pass++) {
+    for (let i = 0; i < info.length; i++) {
+      for (let j = i + 1; j < info.length; j++) {
+        const a = info[i], b = info[j];
+        const dx = b.cx - a.cx, dy = b.cy - a.cy;
+        const d = Math.hypot(dx, dy) || 1e-6;
+        // A visible gap, not a tangent kiss: the negative space between
+        // components is part of the composition.
+        const want = (a.rad + b.rad) * 0.94;
+        if (d >= want) continue;
+        const push = (want - d) * 0.5;
+        const ux = dx / d, uy = dy / d;
+        a.cx -= ux * push; a.cy -= uy * push;
+        b.cx += ux * push; b.cy += uy * push;
+        for (const k of a.ids) { balls[k].x -= ux * push; balls[k].y -= uy * push; }
+        for (const k of b.ids) { balls[k].x += ux * push; balls[k].y += uy * push; }
+      }
     }
   }
 
-  return { balls, clusters, joinedPairs: joined, candidatePairs: Math.max(1, pairs.length), fillet: filletFor(c) };
+  // Fit the finished composition to the frame.
+  //
+  // Normalising here is what guarantees the artwork uses the canvas instead of
+  // sitting wherever the scaffold happened to put it. The offset is applied
+  // AFTER fitting and is deliberately not centred, so the result is composed
+  // rather than merely centred.
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const b of balls) {
+    x0 = Math.min(x0, b.x - b.rx); x1 = Math.max(x1, b.x + b.rx);
+    y0 = Math.min(y0, b.y - b.ry); y1 = Math.max(y1, b.y + b.ry);
+  }
+  const fx = c.aspect >= 1 ? 1.2 : 1.2 * c.aspect;
+  const fy = c.aspect >= 1 ? 1.2 / c.aspect : 1.2;
+  const fit = Math.min((2 * fx * TARGET_COVER) / Math.max(1e-6, x1 - x0),
+                       (2 * fy * TARGET_COVER) / Math.max(1e-6, y1 - y0));
+  const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+  const offX = (1 - c.symmetry) * (rng() - 0.5) * 0.30 * fx;
+  const offY = (1 - c.symmetry) * (rng() - 0.5) * 0.30 * fy;
+  // A uniform fit can only reach the target on ONE axis: a wide arrangement
+  // fits the width and leaves the canvas half empty vertically. Spreading the
+  // CENTRES — never the radii — takes up the slack, so the artwork uses the
+  // rectangle without the primitives themselves being distorted into ovals.
+  // Bounded, because past a point this stops being composition and starts
+  // being a stretch.
+  const spanX = (x1 - x0) * fit, spanY = (y1 - y0) * fit;
+  const pullX = Math.min(1.4, Math.max(1, (2 * fx * TARGET_COVER) / Math.max(1e-6, spanX)));
+  const pullY = Math.min(1.4, Math.max(1, (2 * fy * TARGET_COVER) / Math.max(1e-6, spanY)));
+  for (const b of balls) {
+    b.x = (b.x - mx) * fit * pullX + offX;
+    b.y = (b.y - my) * fit * pullY + offY;
+    b.rx *= fit; b.ry *= fit;
+  }
+
+  return { balls, clusters, controls: c, fillet: lerp(0.045, 0.11, c.merge) * fit,
+           // Capped below 1: a pure smin dissolves the lobes into one oval,
+           // and "broader flowing union" still has to read as lobes.
+           blend: c.merge * 0.62, scale: c.scaleCrop };
 }
 
-// Neck size. Merge thickens the waist as well as adding joins, so the control
-// reads as "more liquid connection" rather than a discrete count ticking up.
-function filletFor(c) {
-  return lerp(0.05, 0.16, c.merge);
+// Solving costs O(n^2) and the field is sampled hundreds of thousands of times
+// per export, so it is memoised on everything that can change it.
+let _cacheKey = null;
+let _cacheVal = null;
+
+export function metaSolve(s) {
+  const m = Object.assign(defaultMeta(), s.meta);
+  const f = s.features ?? {};
+  const key = JSON.stringify([
+    m.count, m.order, m.merge, m.spacing, m.sizeVar, m.stretch, m.symmetry, m.scaleCrop,
+    s.variation ?? 0, s.aspect ?? 0,
+    f.pitchNorm, f.rms, f.centroid, f.spread, f.pitchConf,
+  ]);
+  if (key !== _cacheKey) { _cacheKey = key; _cacheVal = layout(s); }
+  return _cacheVal;
 }
 
-// Approximate ellipse SDF: exact for circles, and close enough for the modest
-// ratios this generator allows. The exact form needs an iterative root solve,
-// which is not worth it inside a per-pixel function that a shader must mirror.
+export const metaBalls = (s) => metaSolve(s).balls;
+export const metaClusters = (s) => metaSolve(s);
+
+// Polynomial smooth minimum — a convex, flowing union.
+export function smin(a, b, k) {
+  if (k <= 0) return Math.min(a, b);
+  const h = Math.max(0, Math.min(1, 0.5 + 0.5 * (b - a) / k));
+  return b * (1 - h) + a * h - k * h * (1 - h);
+}
+
+// The union inside a cluster: fillet at low Merge for a narrow hourglass waist,
+// smin at high Merge for a broad flowing join. Neither alone is right — fillet
+// everywhere exaggerates the pinch into peanuts, smin everywhere dissolves the
+// lobes into soap bubbles.
+export function clusterUnion(d1, d2, fillet, blend) {
+  const f = unionRound(d1, d2, fillet);
+  const sm = smin(d1, d2, fillet * lerp(1.5, 3.2, blend));
+  return f * (1 - blend) + sm * blend;
+}
+
+// Approximate ellipse SDF: exact for circles, close enough for the modest
+// ratios this generator allows, and cheap enough for a shader to mirror.
 export function sdEllipse(px, py, rx, ry, rot) {
   const ca = Math.cos(-rot), sa = Math.sin(-rot);
   const qx = px * ca - py * sa, qy = px * sa + py * ca;
@@ -307,43 +353,57 @@ export function sdEllipse(px, py, rx, ry, rot) {
   return (k1 - 1) * (k1 / k2);
 }
 
-// Solving the composition costs O(n^2) and the field is sampled hundreds of
-// thousands of times per export, so the solve is memoised on everything that
-// can change it. Without this the exporter re-derives the whole arrangement
-// per pixel.
-let _cacheKey = null;
-let _cacheVal = null;
-
-export function metaSolve(s) {
-  const m = Object.assign(defaultMeta(), s.meta);
-  const f = s.features ?? {};
-  const key = JSON.stringify([
-    m.count, m.order, m.merge, m.spacing, m.sizeVar, m.stretch, m.symmetry, m.scaleCrop,
-    s.variation ?? 0,
-    f.pitchNorm, f.rms, f.centroid, f.spread, f.pitchConf,
-  ]);
-  if (key !== _cacheKey) { _cacheKey = key; _cacheVal = metaClusters(s); }
-  return _cacheVal;
-}
-
-// The composition's signed distance. Fillet union WITHIN a cluster, plain min
-// ACROSS clusters — which is what makes connection a decision rather than an
-// accident of overlap.
 export function metaDist(x, y, s) {
-  const { balls, fillet } = metaSolve(s);
-  const perCluster = new Array(META_CLUSTER_MAX).fill(Infinity);
-  for (const b of balls) {
-    const d = sdEllipse(x - b.x, y - b.y, b.rx, b.ry, b.rot);
+  const sol = metaSolve(s);
+  // Scale/crop is a TRUE zoom of the finished artwork: evaluating the field at
+  // p/S and scaling the result by S enlarges positions, radii and necks
+  // together. Multiplying only the centres — which is what it used to do —
+  // spread small forms further apart instead of making the artwork bigger.
+  const S = sol.scale;
+  const px = x / S, py = y / S;
+
+  const per = new Array(META_CLUSTER_MAX).fill(Infinity);
+  for (const b of sol.balls) {
+    const d = sdEllipse(px - b.x, py - b.y, b.rx, b.ry, b.rot);
     const k = b.cluster;
-    perCluster[k] = perCluster[k] === Infinity ? d : unionRound(perCluster[k], d, fillet);
+    per[k] = per[k] === Infinity ? d : clusterUnion(per[k], d, sol.fillet, sol.blend);
   }
   let out = Infinity;
-  for (const d of perCluster) if (d < out) out = d;
-  return out;
+  for (const d of per) if (d < out) out = d;
+  return out * S;
 }
 
-// Thickness, for the field the renderer and exporter share.
 export function metaThickness(x, y, s, edge = 0.004) {
   const d = metaDist(x, y, s);
   return d < -edge ? 1 : d > edge ? 0 : 0.5 - d / (2 * edge);
+}
+
+// Composition metrics, for tests and for checking a change did what was
+// intended. Measured on the same field the renderer draws.
+export function compositionStats(s, aspect = 0.78, N = 220) {
+  const st = Object.assign({}, s, { aspect });
+  const fx = aspect >= 1 ? 1.2 : 1.2 * aspect;
+  const fy = aspect >= 1 ? 1.2 / aspect : 1.2;
+  let ink = 0, x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (let j = 0; j < N; j++) {
+    const y = -fy + (2 * fy * (j + 0.5)) / N;
+    for (let i = 0; i < N; i++) {
+      const x = -fx + (2 * fx * (i + 0.5)) / N;
+      if (metaDist(x, y, st) < 0) {
+        ink++;
+        if (x < x0) x0 = x; if (x > x1) x1 = x;
+        if (y < y0) y0 = y; if (y > y1) y1 = y;
+      }
+    }
+  }
+  const sol = metaSolve(st);
+  const areas = sol.balls.map((b) => Math.PI * b.rx * b.ry);
+  return {
+    inkFraction: ink / (N * N),
+    bboxCoverW: ink ? (x1 - x0) / (2 * fx) : 0,
+    bboxCoverH: ink ? (y1 - y0) / (2 * fy) : 0,
+    components: sol.clusters.length,
+    primitives: sol.balls.length,
+    areaRatio: areas.length ? Math.max(...areas) / Math.min(...areas) : 1,
+  };
 }
