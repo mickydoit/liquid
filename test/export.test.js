@@ -91,3 +91,13 @@ test('an idle (ungrown) field contours to nothing without throwing', () => {
   assert.ok(Array.isArray(rings));
   assert.equal(rings.length, 0, 'an empty canvas should trace no rings');
 });
+
+// ── the organism ───────────────────────────────────────────────────────
+test('an organism design exports a real outline, not a stub', () => {
+  const DISC = { sample: (x, y) => Math.hypot(x, y) - 0.5 };
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, grow: 1, organism: DISC });
+  const svg = buildSVG({ state: s, width: 400, height: 600, ink: '#fff', variant: 'flat' });
+  assert.match(svg, /<path id="water"/);
+  // A disc traced at 400x600 is hundreds of points, not a couple of moves.
+  assert.ok(svg.length > 1000, `expected a real outline, got ${svg.length} bytes`);
+});

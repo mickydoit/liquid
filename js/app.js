@@ -1,12 +1,12 @@
-import { AudioEngine } from './audio.js?v=d58a7cee';
-import { buildFingerprint } from './features.js?v=d58a7cee';
-import { LiquidRenderer } from './renderer.js?v=d58a7cee';
-import { LiveConductor } from './live.js?v=d58a7cee';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=d58a7cee';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=d58a7cee';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=d58a7cee';
-import { makeOrganismCache } from './organism.js?v=d58a7cee';
-import { resolveControls, seedFor } from './blobfield.js?v=d58a7cee';
+import { AudioEngine } from './audio.js?v=32e6954f';
+import { buildFingerprint } from './features.js?v=32e6954f';
+import { LiquidRenderer } from './renderer.js?v=32e6954f';
+import { LiveConductor } from './live.js?v=32e6954f';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=32e6954f';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=32e6954f';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=32e6954f';
+import { makeOrganismCache } from './organism.js?v=32e6954f';
+import { resolveControls, seedFor } from './blobfield.js?v=32e6954f';
 
 const audio = new AudioEngine();
 let renderer = null;
