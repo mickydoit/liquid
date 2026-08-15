@@ -1,12 +1,12 @@
-import { AudioEngine } from './audio.js?v=32e6954f';
-import { buildFingerprint } from './features.js?v=32e6954f';
-import { LiquidRenderer } from './renderer.js?v=32e6954f';
-import { LiveConductor } from './live.js?v=32e6954f';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=32e6954f';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=32e6954f';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=32e6954f';
-import { makeOrganismCache } from './organism.js?v=32e6954f';
-import { resolveControls, seedFor } from './blobfield.js?v=32e6954f';
+import { AudioEngine } from './audio.js?v=2ffd3a4f';
+import { buildFingerprint } from './features.js?v=2ffd3a4f';
+import { LiquidRenderer } from './renderer.js?v=2ffd3a4f';
+import { LiveConductor } from './live.js?v=2ffd3a4f';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=2ffd3a4f';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=2ffd3a4f';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=2ffd3a4f';
+import { makeOrganismCache } from './organism.js?v=2ffd3a4f';
+import { resolveControls, seedFor } from './blobfield.js?v=2ffd3a4f';
 
 const audio = new AudioEngine();
 let renderer = null;
@@ -35,7 +35,19 @@ const params = {
   variation: 0,
 };
 
-const organismCache = makeOrganismCache();
+// Baked in a worker: a preview bake is ~22 ms, which reads as a stutter while
+// a Poster slider is being dragged. onReady is where the finished grid reaches
+// the screen, since request() returns the previous one so the loop never waits.
+const organismCache = makeOrganismCache({
+  worker: true,
+  onReady: (baked) => {
+    const s = currentState();
+    if (!s) return;
+    s.organism = baked;
+    renderer.setOrganismSDF(baked.grid, baked.w, baked.h);
+    renderer._dirty = true;
+  },
+});
 
 // Rebuild the organism and hand it to BOTH the renderer (as a texture) and the
 // field state (as a sample function). The renderer draws from the texture; the
@@ -50,12 +62,17 @@ function refreshOrganism() {
   // frame the user is actually looking at.
   const c = renderer.canvas;
   const aspect = (c.width || 2) / (c.height || 3);
-  const baked = organismCache.request(seed, controls, 256, aspect);
-  s.organism = baked;
   // The exporter re-bakes at full resolution and needs the inputs to do it.
+  // Set BEFORE the request: the bake is asynchronous, so an export triggered
+  // in between must still know what to rebuild.
   s.organismSource = { seed, controls };
-  renderer.setOrganismSDF(baked.grid, baked.w, baked.h);
-  renderer._dirty = true;
+  const baked = organismCache.request(seed, controls, 256, aspect);
+  // null until the first worker bake lands; onReady takes it from there.
+  if (baked) {
+    s.organism = baked;
+    renderer.setOrganismSDF(baked.grid, baked.w, baked.h);
+    renderer._dirty = true;
+  }
 }
 
 const $ = (id) => document.getElementById(id);

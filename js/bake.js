@@ -231,8 +231,17 @@ export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 
   const grid = new Float64Array(total);
   for (let i = 0; i < total; i++) grid[i] = cells[i] * scale;
 
+  return { grid, mask, w, h, aspect, sample: gridSampler(grid, w, h, aspect) };
+}
+
+// Bilinear sampler over a baked grid.
+//
+// Split out of bake() so a grid that arrives WITHOUT its closure — from a
+// worker, which can only transfer the buffer — is sampled by this exact code
+// rather than by a reimplementation on the receiving side.
+export function gridSampler(grid, w, h, aspect) {
   const FAR = 10;
-  const sample = (x, y) => {
+  return (x, y) => {
     // World -> continuous grid coordinates.
     const gi = ((x / aspect + 1) / 2) * w - 0.5;
     const gj = ((1 - y) / 2) * h - 0.5;
@@ -256,6 +265,4 @@ export function bake(field, { aspect = FORMATS.portrait, res = 1024, simplify = 
     const c = grid[j1 * w + i0], d = grid[j1 * w + i1];
     return (a * (1 - fx) + b * fx) * (1 - fy) + (c * (1 - fx) + d * fx) * fy;
   };
-
-  return { grid, mask, w, h, aspect, sample };
 }

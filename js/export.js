@@ -1,6 +1,6 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=32e6954f';
-import { makeWaterField, makeCentrelineField, ORG_SPAN } from './cymafield.js?v=32e6954f';
-import { makeOrganismCache } from './organism.js?v=32e6954f';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=2ffd3a4f';
+import { makeWaterField, makeCentrelineField, ORG_SPAN } from './cymafield.js?v=2ffd3a4f';
+import { makeOrganismCache } from './organism.js?v=2ffd3a4f';
 
 // The long edge of an export-resolution organism bake. ~270 ms, which is fine
 // for a one-off export and far too slow for the preview — hence two

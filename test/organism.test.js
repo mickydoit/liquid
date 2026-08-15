@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { makeOrganismCache } from '../js/organism.js';
+import { makeOrganismCache, bakeOrganism } from '../js/organism.js';
 
 const CONTROLS = { formCount: 0.30, stretch: 0.95, merge: 0.10, simplify: 0.55, scaleCrop: 1.30 };
 
@@ -39,4 +39,14 @@ test('a resolution change re-bakes', () => {
   c.request(47, CONTROLS, 96);
   c.request(47, CONTROLS, 128);
   assert.equal(c.bakes, 2);
+});
+
+test('the worker and the synchronous fallback share one bake function', () => {
+  // The worker must not become a second implementation. bakeOrganism() is the
+  // single function both paths call, so they cannot drift apart.
+  const a = bakeOrganism(47, CONTROLS, 96, 2 / 3);
+  const b = bakeOrganism(47, CONTROLS, 96, 2 / 3);
+  assert.deepEqual(Array.from(a.grid), Array.from(b.grid));
+  assert.equal(a.w, b.w);
+  assert.equal(a.h, b.h);
 });

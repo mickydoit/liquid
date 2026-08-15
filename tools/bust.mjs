@@ -57,7 +57,11 @@ write('index.html', unstamped('index.html')
 for (const f of jsFiles) {
   const rel = `js/${f}`;
   write(rel, unstamped(rel)
-    .replace(/(from\s+')(\.\.?\/[^']+\.js)(')/g, (_, a, url, b) => a + stamp(url) + b));
+    .replace(/(from\s+')(\.\.?\/[^']+\.js)(')/g, (_, a, url, b) => a + stamp(url) + b)
+    // Workers are fetched by URL, not by import specifier, so they need the
+    // same stamp — otherwise the one file whose staleness is hardest to spot
+    // is the only one left uncovered.
+    .replace(/(new URL\(')(\.\.?\/[^']+\.js)(')/g, (_, a, url, b) => a + stamp(url) + b));
 }
 
 console.log(changed.length
