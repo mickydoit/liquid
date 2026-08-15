@@ -1,6 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=e10531ff';
-import { stepGrow, isMeta } from './cymafield.js?v=e10531ff';
-import { metaSolve, META_MAX } from './metafield.js?v=e10531ff';
+import { VERT, FRAG } from './shader.js?v=1a2f177b';
+import { stepGrow, isMeta } from './cymafield.js?v=1a2f177b';
+import { metaSolve, META_MAX } from './metafield.js?v=1a2f177b';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -65,7 +65,7 @@ export class LiquidRenderer {
     for (const n of UNIFORMS) this.u[n] = gl.getUniformLocation(prog, n);
 
     this.state = null;
-    this.anim = 'full';
+    this.anim = 'live-active';
     this.zoom = 1;
     this.pan = [0, 0];
     // Chrome inset, kept SEPARATE from the user's pan: the design is nudged
@@ -101,11 +101,16 @@ export class LiquidRenderer {
     this._dirty = true;
   }
 
-  // `anim` is the render state, not a style:
-  //   'full'     — live and responding: geometry and material both advance
-  //   'material' — live HOLD: geometry frozen, only light on the water moves
-  //   'none'     — submitted recording: nothing advances, zero draw calls
-  setField(state, anim = 'full') {
+  // `anim` is the render STATE, not a style. Four, and they are deliberately
+  // distinct — reusing one for two situations is how a submitted design ended
+  // up shimmering like a held live one:
+  //
+  //   'idle'             — blank canvas, nothing to draw
+  //   'live-active'      — responding: geometry AND material advance
+  //   'live-hold'        — silence: geometry frozen, material clock only
+  //   'submitted-static' — a finished recording: NOTHING advances, no shimmer,
+  //                        no highlight movement, zero draw calls
+  setField(state, anim = 'live-active') {
     this.state = state;
     this.anim = anim;
     this._dirty = true;
@@ -252,8 +257,8 @@ export class LiquidRenderer {
     // An empty, ungrown canvas has nothing to animate — without this the app
     // redraws blank frames at 60fps while simply sitting there waiting.
     const empty = this.state && (this.state.grow ?? 1) === 0 && (this.state.growTarget ?? 1) === 0;
-    const frozen = empty || this.anim === 'none'
-                || (this.anim === 'material' && this.materialRate === 0);
+    const frozen = empty || this.anim === 'submitted-static' || this.anim === 'idle'
+                || (this.anim === 'live-hold' && this.materialRate === 0);
     if (this.state && !frozen) {
       const now = performance.now() / 1000;
       const dt = Math.min(0.1, this._tick ? now - this._tick : 0.016);
@@ -261,9 +266,9 @@ export class LiquidRenderer {
 
       // Material time always runs while animating — this is the shimmer, and
       // it is the only thing that moves during Hold.
-      this._matTime += dt * (this.anim === 'material' ? this.materialRate : 1);
+      this._matTime += dt * (this.anim === 'live-hold' ? this.materialRate : 1);
 
-      if (this.anim === 'full') {
+      if (this.anim === 'live-active') {
         // Geometry time: breathing and fine-detail drift. Frozen in Hold so a
         // held figure cannot change shape on its own.
         this.state.t += dt;
@@ -275,8 +280,9 @@ export class LiquidRenderer {
       this.state.ripAmt *= Math.exp(-dt * 1.2);
       this._dirty = true;
     } else {
-      // 'none' falls through deliberately: no advance, no dirty flag, so a
-      // submitted design costs zero draw calls and is genuinely static.
+      // 'submitted-static' and 'idle' fall through deliberately: no advance and
+      // no dirty flag, so a submitted design costs zero draw calls and is
+      // genuinely static rather than merely slow.
       this._tick = 0;
     }
     if (!this._dirty) return;

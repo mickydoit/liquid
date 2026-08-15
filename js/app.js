@@ -1,11 +1,11 @@
-import { AudioEngine } from './audio.js?v=e10531ff';
-import { buildFingerprint } from './features.js?v=e10531ff';
-import { LiquidRenderer } from './renderer.js?v=e10531ff';
-import { LiveConductor } from './live.js?v=e10531ff';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=e10531ff';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=e10531ff';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=e10531ff';
-import { defaultMeta } from './metafield.js?v=e10531ff';
+import { AudioEngine } from './audio.js?v=1a2f177b';
+import { buildFingerprint } from './features.js?v=1a2f177b';
+import { LiquidRenderer } from './renderer.js?v=1a2f177b';
+import { LiveConductor } from './live.js?v=1a2f177b';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=1a2f177b';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=1a2f177b';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=1a2f177b';
+import { defaultMeta } from './metafield.js?v=1a2f177b';
 
 const audio = new AudioEngine();
 let renderer = null;
@@ -19,7 +19,9 @@ let recordStart = 0;
 let design = null;          // the submitted, static field state
 
 const params = {
-  gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
+  // Restrained by default: a strong rim drew a luminous ring around every
+  // separate lobe, which is precisely what made the water read as soap bubbles.
+  gloss: 0.9, dispersion: 0.25, rim: 0.45, depth: 0.8, refract: 0.6,
   flow: 0.35, simple: 0, swell: 0, mass: 0, form: 0, view: 0, lineW: 0.012,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
@@ -67,8 +69,8 @@ function stateFromFingerprint(fp) {
     pitchConf: fp.pitchConfidence,
   }));
   s.amp = Math.min(1, Math.max(s.amp, params.flow * 1.6));
-  // Start empty and flood in, so a submitted design arrives rather than
-  // appearing whole.
+  // grow is set by the caller: Live grows a design in, a submitted recording
+  // shows it whole and completely static.
   s.simple = params.simple;
   s.swell = params.swell;
   s.mass = params.mass;
@@ -147,11 +149,13 @@ function submit() {
   const fp = buildFingerprint(frames, (performance.now() - recordStart) / 1000);
   design = stateFromFingerprint(fp);
   applyStyle();
-  // 'material': the GEOMETRY is frozen — the figure never changes on its own —
-  // but the water keeps drifting at the Motion rate so a submitted design
-  // reads as liquid rather than as a screenshot. Motion 0 freezes it entirely.
-  renderer.materialRate = params.motion;
-  renderer.setField(design, 'material');
+  // A submitted recording is COMPLETELY static — no flood-in, no geometry
+  // drift, no shimmer, no highlight movement. That is what separates it from
+  // Live Hold, which does shimmer. Motion is deliberately ignored here.
+  design.grow = 1;
+  design.growTarget = 1;
+  renderer.materialRate = 0;
+  renderer.setField(design, 'submitted-static');
   mode = 'captured';
   showButtons();
   setStatus('Design created — static. Export PNG or vectors.');
@@ -191,8 +195,10 @@ function endLive() {
   // Freeze whatever was on screen when live ended.
   if (renderer.state) {
     design = renderer.state;
+    // Ending live leaves a HELD design, not a submitted one: it keeps its
+    // restrained shimmer.
     renderer.materialRate = params.motion;
-    renderer.setField(design, 'material');
+    renderer.setField(design, 'live-hold');
   }
   showButtons();
   setStatus(design ? 'Live ended — design frozen' : 'Ready');
@@ -287,7 +293,7 @@ window.addEventListener('DOMContentLoaded', () => {
   applyInset();
   window.addEventListener('resize', applyInset);
   // Empty canvas until the first valid sound: idleState has grow 0.
-  renderer.setField(idleState(), 'full');
+  renderer.setField(idleState(), 'idle');
 
   $('btn-mic').addEventListener('click', startMic);
   $('file').addEventListener('change', (e) => { if (e.target.files[0]) loadFile(e.target.files[0]); });
@@ -317,7 +323,7 @@ window.addEventListener('DOMContentLoaded', () => {
     const s = currentState();
     if (s && mode === 'captured') {
       s.amp = clamp01(params.flow * 1.6);
-      renderer.setField(s, 'material');
+      renderer.setField(s, 'live-hold');
     }
   });
   // Simplicity is GEOMETRY, not style: it lowers the modal orders, so it has
@@ -343,8 +349,16 @@ window.addEventListener('DOMContentLoaded', () => {
     const s = currentState();
     if (s) { s.mass = params.mass; renderer._dirty = true; }
   });
+  // Only one generator's controls are ever on screen.
+  function showModeGroups() {
+    const meta = params.mode === 'meta';
+    $('meta-group').hidden = !meta;
+    $('cymatic-group').hidden = meta;
+  }
+
   $('sel-mode').addEventListener('change', (e) => {
     params.mode = e.target.value;
+    showModeGroups();
     if (conductor) conductor.field.mode = params.mode;
     applyPattern(currentState());
     setStatus(params.mode === 'meta' ? 'Metaball Cymatic' : 'Detailed Cymatic');
@@ -407,11 +421,12 @@ window.addEventListener('DOMContentLoaded', () => {
     b.addEventListener('click', () => doExport(b.dataset.export)));
 
   showButtons();
+  showModeGroups();
   captureLoop();
   setStatus('Ready — record, upload, or go live');
 
   // Diagnostics hook: uniform and field state are otherwise unreachable.
   window.__liquid = { params, renderer: () => renderer, conductor: () => conductor,
                       idleState, targetFromFeatures, applyPattern,
-                      setField: (s, a = 'full') => renderer.setField(s, a) };
+                      setField: (s, a = 'live-active') => renderer.setField(s, a) };
 });

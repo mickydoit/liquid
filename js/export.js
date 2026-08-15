@@ -1,5 +1,6 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=e10531ff';
-import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=e10531ff';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=1a2f177b';
+import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=1a2f177b';
+import { META_FRAME } from './metafield.js?v=1a2f177b';
 
 // How far past the page a metaball composition is contoured.
 //
@@ -22,7 +23,11 @@ function metaFrame(state, width, height) {
   const aspect = width / height;
   // fieldOutline otherwise defaults to a SQUARE +-1.35 fitted into the page,
   // which letterboxes a portrait export and crops the composition.
-  const sx = aspect * 1.35 * GUARD, sy = 1.35 * GUARD;
+  // The SAME rectangle the composition was laid out against — see META_FRAME.
+  // A different constant here silently rescales every exported design.
+  const fx = aspect >= 1 ? META_FRAME : META_FRAME * aspect;
+  const fy = aspect >= 1 ? META_FRAME / aspect : META_FRAME;
+  const sx = fx * GUARD, sy = fy * GUARD;
   return {
     bounds: { x0: -sx, x1: sx, y0: -sy, y1: sy },
     // Bounds and pixel size scale together, so the scale is unchanged and the

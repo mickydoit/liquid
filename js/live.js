@@ -1,4 +1,4 @@
-import { idleState, targetFromFeatures, glide, advance, kick } from './cymafield.js?v=e10531ff';
+import { idleState, targetFromFeatures, glide, advance, kick } from './cymafield.js?v=1a2f177b';
 
 // Live conductor: audio frames in, field state out.
 //
@@ -116,7 +116,7 @@ export class LiveConductor {
     // 'idle' and 'hold' both leave the state untouched: idle has nothing to
     // show yet, hold is the point. The renderer advances material time (and
     // only material time) for both.
-    this.renderer.setField(this.field, responsive ? 'full' : 'material');
+    this.renderer.setField(this.field, responsive ? 'live-active' : 'live-hold');
     if (this.onState) this.onState(this.phase);
   }
 

@@ -15,9 +15,9 @@
 // and every lobe is its own component. At Merge 1 the plan is fully realised.
 // Anchors, lobe sizes and the plan never change with Merge — only which groups
 // are active — so the layout stays stable while the connectivity moves.
-import { psi } from './cymafield.js';
-import { makeRng } from './blobfield.js';
-import { fnv1a } from './hash.js';
+import { psi } from './cymafield.js?v=1a2f177b';
+import { makeRng } from './blobfield.js?v=1a2f177b';
+import { fnv1a } from './hash.js?v=1a2f177b';
 
 export const META_MAX = 12;
 export const META_CLUSTER_MAX = 12;
@@ -41,6 +41,11 @@ const lerp = (a, b, t) => a + (b - a) * t;
 // Longer forms come from two or three joined lobes, not one stretched ellipse:
 // past this an ellipse stops reading as a lobe and starts reading as a spike.
 const MAX_ECC = 1.6;
+
+// Half-extent of the composition's frame, in world units. Exported so the
+// vector export frames exactly the same rectangle the field is composed
+// against — they were 1.35 and 1.2, which shipped the design ~15% small.
+export const META_FRAME = 1.2;
 
 // Fraction of the frame the composition should span.
 const TARGET_COVER = 0.92;
@@ -93,8 +98,8 @@ export function metaSeed(s) {
 // The frame in world units. Sizes are expressed against the SHORTER edge so the
 // targets mean the same thing in portrait and landscape.
 function frameOf(c) {
-  const fx = c.aspect >= 1 ? 1.2 : 1.2 * c.aspect;
-  const fy = c.aspect >= 1 ? 1.2 / c.aspect : 1.2;
+  const fx = c.aspect >= 1 ? META_FRAME : META_FRAME * c.aspect;
+  const fy = c.aspect >= 1 ? META_FRAME / c.aspect : META_FRAME;
   return { fx, fy, short: 2 * Math.min(fx, fy) };
 }
 
