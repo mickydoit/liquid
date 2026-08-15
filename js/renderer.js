@@ -1,6 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=76298d43';
-import { stepGrow, isMeta } from './cymafield.js?v=76298d43';
-import { metaSolve, META_MAX } from './metafield.js?v=76298d43';
+import { VERT, FRAG } from './shader.js?v=87f2b33d';
+import { stepGrow, isMeta } from './cymafield.js?v=87f2b33d';
+import { metaSolve, META_MAX } from './metafield.js?v=87f2b33d';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //

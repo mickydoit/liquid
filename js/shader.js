@@ -242,6 +242,103 @@ void main() {
     return;
   }
 
+  // ── Metaball Cymatic water ─────────────────────────────────────────
+  //
+  // MATERIAL ONLY. Nothing here touches T, the coverage ramp or the alpha, so
+  // the silhouette, the flat view and the vector export are unaffected.
+  //
+  // A metaball is FLAT inside: the coverage gradient is zero everywhere except
+  // at the boundary, so shading built on that gradient can only light the rim
+  // and leaves the interior to be filled by a travelling-wave pattern — which
+  // is what read as pearl and airbrushed white bands.
+  //
+  // So the surface is built from the DISTANCE FIELD instead: a shallow dome
+  // over each form, deepest at its centre and thinning to nothing at the edge.
+  // That gives a real surface normal across the whole body, so the interior
+  // shows the background bent through the liquid rather than a painted
+  // texture, and the strongest refraction lands near the edges where a
+  // shallow lens actually bends most.
+  if (uMode > 0.5) {
+    float mt2 = uMatTime;
+    // Shimmer perturbs the SURFACE, not the colour: it moves the refraction
+    // rather than sweeping a white band across the form.
+    float ripple = uGloss * 0.020
+                 * sin(p.x * 3.3 + p.y * 2.1 + mt2 * 0.55)
+                 * sin(p.x * -2.4 + p.y * 3.6 - mt2 * 0.41);
+
+    // An EXPONENTIAL depth profile, not a clamped power.
+    //
+    // A distance field has a crease along its medial axis — the skeleton
+    // running through the middle of every form — and any height built on it
+    // inherits that crease as a visible speck or ridge at each lobe's centre.
+    // This profile's slope decays with depth, so the crease sits where the
+    // response is flattest and stops showing, while the edge keeps the steep
+    // falloff the lensing needs.
+    float K = 2.6;                        // how quickly the liquid deepens
+    float dome = 1.0 - exp(min(0.0, metaDistf(p)) * K);
+    float dxp = 1.0 - exp(min(0.0, metaDistf(p + e.xy)) * K);
+    float dxm = 1.0 - exp(min(0.0, metaDistf(p - e.xy)) * K);
+    float dyp = 1.0 - exp(min(0.0, metaDistf(p + e.yx)) * K);
+    float dym = 1.0 - exp(min(0.0, metaDistf(p - e.yx)) * K);
+    vec2 slope = vec2(dxp - dxm, dyp - dym) / (2.0 * px);
+    slope += ripple * vec2(sin(p.y * 5.0 + mt2 * 0.7), cos(p.x * 4.4 - mt2 * 0.6));
+    vec3 Nw = normalize(vec3(-slope.x * 0.055, 1.0, -slope.y * 0.055));
+
+    // Refraction scales with how much liquid the ray passes through and how
+    // steeply the surface tilts — near zero over the flat middle, strongest
+    // toward the rim. That is the lensing, and it is the whole effect.
+    float tilt = 1.0 - Nw.y;
+    vec2 ruv2 = vUv + Nw.xz * (0.045 * uRefract) * (0.25 + dome);
+    vec3 bg;
+    if (uHasBack > 0.5) {
+      float sp2 = uDispersion * 0.0035 * dome;
+      bg = vec3(texture2D(uBackTex, ruv2 + Nw.xz * sp2).r,
+                texture2D(uBackTex, ruv2).g,
+                texture2D(uBackTex, ruv2 - Nw.xz * sp2).b);
+    } else {
+      // No backdrop: the ground still has to be legible THROUGH the water, so
+      // it carries a gentle gradient for the lens to bend.
+      float vg = 1.0 - 0.30 * length(ruv2 - 0.5);
+      bg = uGround * (vg + 0.05 * sin(ruv2.y * 6.0 + ruv2.x * 2.0));
+    }
+
+    // Body: the background, taking on the liquid's own colour with depth. The
+    // liquid needs enough of its own presence for the connected silhouette to
+    // read, without becoming opaque.
+    vec3 colW = mix(bg, uDeep, clamp(dome * 0.78 * uDepth, 0.0, 1.0));
+    // Slight inward shading under the rim, where a real meniscus is thickest.
+
+    // Fresnel plus a meniscus shadow just inside it.
+    //
+    // The edge is what carries the silhouette, and it has to do so without a
+    // uniform white outline. A brightening alone washed out; pairing it with a
+    // slight darkening immediately inside gives the boundary real definition,
+    // which is also how a meniscus actually reads — bright lip, thicker
+    // shadowed water behind it.
+    // The dome's slope is gentle, so the edge response needs a steep gate or
+    // the boundary never reads.
+    float fr = pow(clamp(tilt * 11.0, 0.0, 1.0), 1.1);
+    colW *= 1.0 - 0.20 * smoothstep(0.10, 0.85, fr);
+    colW += (vec3(1.0) - colW) * fr * 0.85 * uRim;
+
+    // A few small glints, not a sheet.
+    //
+    // The light is deliberately OBLIQUE. A near-overhead light puts the
+    // specular peak where the surface is flattest — dead centre of every lobe —
+    // so an identical glint repeated on each one and read as an artefact rather
+    // than as light. Off-axis, it lands on the shoulder where the surface
+    // actually turns, and only on some forms.
+    vec3 Lw = normalize(vec3(-0.62, 0.42, 0.44));
+    float sp3 = pow(max(0.0, dot(Nw, normalize(Lw + vec3(0.0, 1.0, 0.0)))), 90.0);
+    colW += vec3(1.0) * sp3 * 0.40 * uGloss * smoothstep(0.02, 0.10, tilt);
+
+    float covW = smoothstep(0.02, 0.14, T);
+    vec3 plainW = uGround * (1.0 - 0.30 * length(vUv - 0.5));
+    colW = mix(plainW, colW, covW);
+    gl_FragColor = mix(vec4(colW, 1.0), vec4(colW, covW), uTransparent);
+    return;
+  }
+
   // Internal surface motion, LIGHTING ONLY — never applied to thickness T, so
   // the silhouette, coverage and vector export stay bit-identical while the
   // surface moves. Three travelling waves rather than one static wobble: the

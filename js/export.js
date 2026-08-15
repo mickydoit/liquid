@@ -1,6 +1,6 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=76298d43';
-import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=76298d43';
-import { META_FRAME } from './metafield.js?v=76298d43';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=87f2b33d';
+import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=87f2b33d';
+import { META_FRAME } from './metafield.js?v=87f2b33d';
 
 // How far past the page a metaball composition is contoured.
 //
