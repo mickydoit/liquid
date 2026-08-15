@@ -29,6 +29,10 @@ uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
 uniform float uHasBack;
+uniform sampler2D uOrganism;  // baked signed distance, 16-bit across R and G
+uniform vec2 uOrgSize;
+uniform float uHasOrganism;
+uniform float uPxWorld;       // one pixel, in world units
 uniform float uAspect, uZoom, uGloss, uDispersion, uTransparent;
 uniform vec2 uPan;
 uniform vec3 uGround, uInk, uDeep;
@@ -85,13 +89,43 @@ float sminf(float a, float b, float k) {
   return mix(b, a, h) - k * h * (1.0 - h);
 }
 
-float blobAt(vec2 p) {
+// Split from its threshold so the Form ramp can blend distances rather than
+// masks — see blobDist() in js/cymafield.js for why that matters.
+float blobDist(vec2 p) {
   float d = length(p - uBlob[0].xy) - uBlob[0].z;
   for (int i = 1; i < 10; i++) {
     if (i >= uBlobN) break;
     d = sminf(d, length(p - uBlob[i].xy) - uBlob[i].z, uBlobK);
   }
-  return 1.0 - smoothstep(-0.012, 0.012, d);
+  return d;
+}
+
+float blobAt(vec2 p) {
+  return 1.0 - smoothstep(-0.012, 0.012, blobDist(p));
+}
+
+// The organism, sampled from its baked grid. The decode MIRRORS
+// unpackDistance() in js/sdftex.js — one format, split across two languages.
+// texture2D already returns 0-1 floats, so the JS side's /255 is applied for
+// us and this is (r + g/255) * 2*RANGE - RANGE with RANGE = 2.
+float organismDist(vec2 p) {
+  // The bake covers x in [-aspect, aspect] and y in [-1, 1], but p spans
+  // +-3.15/2 down the viewport at zoom 1. Without this divide the organism
+  // would occupy the middle 63% of the frame and everything past it would be
+  // CLAMP_TO_EDGE smear — flat cuts where the form should keep going.
+  // Mirrors ORG_SPAN in js/cymafield.js.
+  vec2 q = p / 1.575;
+  float a = uOrgSize.x / uOrgSize.y;
+  vec2 uv = vec2((q.x / a + 1.0) * 0.5, (1.0 - q.y) * 0.5);
+  // Past the bake, report "far outside" rather than sampling. CLAMP_TO_EDGE
+  // would repeat the outermost row and smear it across the rest of the view
+  // whenever the frame shows more world than the bake covers — which the
+  // chrome inset alone does, at zoom 0.52. bake()'s own sample() returns FAR
+  // here for the same reason; this keeps the GPU honest with the CPU.
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) return 10.0;
+  vec4 t = texture2D(uOrganism, uv);
+  // Back to world units, since q was scaled down to reach the bake.
+  return ((t.r + t.g / 255.0) * 4.0 - 2.0) * 1.575;
 }
 
 float nodalAt(vec2 p) {
@@ -131,8 +165,24 @@ float nodalAt(vec2 p) {
   // blended in. In between, the cymatic figure still reads through it.
   // smoothstep, not linear: a linear blend leaves a visible ghost web
   // behind the blob at Form 0.85-0.95.
-  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, uForm));
-  return T * (1.0 - smoothstep(1.02, 1.30, length(p)));
+  // The Form ramp, hinged at 0.5 — mirrors nodalThickness() in js/cymafield.js.
+  //   0.0 -> 0.5  cymatic field -> blob   (mask blend)
+  //   0.5 -> 1.0  blob -> organism        (DISTANCE blend, thresholded once)
+  T = mix(T, blobAt(p), smoothstep(0.0, 1.0, min(1.0, uForm * 2.0)));
+
+  if (uForm > 0.5 && uHasOrganism > 0.5) {
+    float upper = smoothstep(0.0, 1.0, (uForm - 0.5) * 2.0);
+    float d = mix(blobDist(p), organismDist(p), upper);
+    // One pixel of transition, no more. This is what makes the upper half
+    // crisp where blending thresholded masks smears over tens of pixels.
+    T = 1.0 - smoothstep(-uPxWorld, uPxWorld, d);
+  }
+  // The dish edge is released as Form crosses into the organism — see the
+  // matching comment in nodalThickness(). Without this the organism is trapped
+  // in a disc and cannot run off the frame.
+  float plate = 1.0 - smoothstep(1.02, 1.30, length(p));
+  float release = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
+  return T * mix(plate, 1.0, release);
 }
 
 // Emergence mask. The figure floods outward from the centre, so a design
@@ -140,7 +190,13 @@ float nodalAt(vec2 p) {
 // At uGrow = 0 nothing is visible — that is the resting state now, instead of
 // a scatter of unrelated droplets sitting over the figure.
 float waterAt(vec2 p) {
+  // Released for the organism, exactly as the plate edge is — mirrors
+  // reveal() in js/cymafield.js. This is a fixed radius in WORLD units, but
+  // how much world is on screen depends on zoom, so no constant widening
+  // covers every zoom.
   float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
+  float revRelease = clamp((uForm - 0.5) * 2.0, 0.0, 1.0);
+  reveal = mix(reveal, 1.0, revRelease);
   return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }
 

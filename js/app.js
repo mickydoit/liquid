@@ -1,10 +1,12 @@
-import { AudioEngine } from './audio.js?v=6ddb29f8';
-import { buildFingerprint } from './features.js?v=6ddb29f8';
-import { LiquidRenderer } from './renderer.js?v=6ddb29f8';
-import { LiveConductor } from './live.js?v=6ddb29f8';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=6ddb29f8';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=6ddb29f8';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=6ddb29f8';
+import { AudioEngine } from './audio.js?v=2ffd3a4f';
+import { buildFingerprint } from './features.js?v=2ffd3a4f';
+import { LiquidRenderer } from './renderer.js?v=2ffd3a4f';
+import { LiveConductor } from './live.js?v=2ffd3a4f';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=2ffd3a4f';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=2ffd3a4f';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=2ffd3a4f';
+import { makeOrganismCache } from './organism.js?v=2ffd3a4f';
+import { resolveControls, seedFor } from './blobfield.js?v=2ffd3a4f';
 
 const audio = new AudioEngine();
 let renderer = null;
@@ -25,7 +27,53 @@ const params = {
   motion: 0.35,
   ground: '#aeb8bf', ink: '#12181d', deep: '#7d94a6',
   transparent: false, exportRes: 1600,
+  // The organism's art direction, used above Form 0.5. Defaults are the
+  // `large` scenario from tools/render.mjs — the tuned cropped-poster case.
+  poster: { formCount: 0.30, stretch: 0.95, merge: 0.10, simplify: 0.55, scaleCrop: 1.30 },
+  // Reroll step. Same sound and settings plus a different variation gives an
+  // alternative composition; see seedFor() in js/blobfield.js.
+  variation: 0,
 };
+
+// Baked in a worker: a preview bake is ~22 ms, which reads as a stutter while
+// a Poster slider is being dragged. onReady is where the finished grid reaches
+// the screen, since request() returns the previous one so the loop never waits.
+const organismCache = makeOrganismCache({
+  worker: true,
+  onReady: (baked) => {
+    const s = currentState();
+    if (!s) return;
+    s.organism = baked;
+    renderer.setOrganismSDF(baked.grid, baked.w, baked.h);
+    renderer._dirty = true;
+  },
+});
+
+// Rebuild the organism and hand it to BOTH the renderer (as a texture) and the
+// field state (as a sample function). The renderer draws from the texture; the
+// exporter contours the state. They must be the same bake, or a design would
+// export differently from its preview.
+function refreshOrganism() {
+  const s = currentState();
+  if (!s || (params.form ?? 0) <= 0.5) return;
+  const controls = resolveControls(params.poster, s.features ?? null);
+  const seed = seedFor(s.features ?? null, params.variation);
+  // Baked at the canvas's own aspect, so the composition is cropped by the
+  // frame the user is actually looking at.
+  const c = renderer.canvas;
+  const aspect = (c.width || 2) / (c.height || 3);
+  // The exporter re-bakes at full resolution and needs the inputs to do it.
+  // Set BEFORE the request: the bake is asynchronous, so an export triggered
+  // in between must still know what to rebuild.
+  s.organismSource = { seed, controls };
+  const baked = organismCache.request(seed, controls, 256, aspect);
+  // null until the first worker bake lands; onReady takes it from there.
+  if (baked) {
+    s.organism = baked;
+    renderer.setOrganismSDF(baked.grid, baked.w, baked.h);
+    renderer._dirty = true;
+  }
+}
 
 const $ = (id) => document.getElementById(id);
 const hex = (h) => {
@@ -130,6 +178,9 @@ function submit() {
   // reads as liquid rather than as a screenshot. Motion 0 freezes it entirely.
   renderer.materialRate = params.motion;
   renderer.setField(design, 'material');
+  // A fresh fingerprint means a fresh seed, so the organism must be rebuilt
+  // for the new sound rather than held over from the previous design.
+  refreshOrganism();
   mode = 'captured';
   showButtons();
   setStatus('Design created — static. Export PNG or vectors.');
@@ -169,6 +220,7 @@ function endLive() {
     design = renderer.state;
     renderer.materialRate = params.motion;
     renderer.setField(design, 'material');
+    refreshOrganism();
   }
   showButtons();
   setStatus(design ? 'Live ended — design frozen' : 'Ready');
@@ -324,6 +376,27 @@ window.addEventListener('DOMContentLoaded', () => {
     if (conductor) conductor.field.form = params.form;
     const s = currentState();
     if (s) { s.form = params.form; renderer._dirty = true; }
+    // Crossing the hinge is what brings the organism into play, so the bake
+    // has to be available before the ramp asks for it.
+    refreshOrganism();
+  });
+
+  // The Poster controls are GEOMETRY, so like Simplicity and Swell they have
+  // to land on the state the vector export reads — which refreshOrganism does
+  // by writing s.organism and s.organismSource.
+  const POSTER = { 'sl-p-count': 'formCount', 'sl-p-stretch': 'stretch',
+                   'sl-p-merge': 'merge', 'sl-p-simplify': 'simplify',
+                   'sl-p-crop': 'scaleCrop' };
+  for (const [id, key] of Object.entries(POSTER)) {
+    $(id).addEventListener('input', (e) => {
+      params.poster[key] = parseFloat(e.target.value);
+      refreshOrganism();
+    });
+  }
+  $('btn-reroll').addEventListener('click', () => {
+    params.variation++;
+    refreshOrganism();
+    setStatus(`Composition ${params.variation + 1}`);
   });
   $('sl-motion').addEventListener('input', (e) => {
     params.motion = parseFloat(e.target.value);
@@ -367,6 +440,6 @@ window.addEventListener('DOMContentLoaded', () => {
 
   // Diagnostics hook: uniform and field state are otherwise unreachable.
   window.__liquid = { params, renderer: () => renderer, conductor: () => conductor,
-                      idleState, targetFromFeatures,
+                      idleState, targetFromFeatures, refreshOrganism,
                       setField: (s, a = 'full') => renderer.setField(s, a) };
 });

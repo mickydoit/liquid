@@ -186,3 +186,92 @@ test('grow settles exactly at its target, and drains back when it returns to 0',
   for (let i = 0; i < 200; i++) stepGrow(s, 0.05);
   assert.equal(s.grow, 0, 'Clear must drain the figure back out');
 });
+
+// ── blob distance, split from its threshold ────────────────────────────
+import { blobDist, blobThickness, ORG_SPAN } from '../js/cymafield.js';
+
+test('blobDist is negative inside a lobe and positive far outside', () => {
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5 });
+  // The centre lobe always exists, so the origin is inside.
+  assert.ok(blobDist(0, 0, s) < 0, 'origin should be inside');
+  assert.ok(blobDist(3, 3, s) > 0, 'far corner should be outside');
+});
+
+test('blobThickness still agrees with the sign of blobDist', () => {
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5 });
+  for (const [x, y] of [[0, 0], [0.5, 0.2], [1.5, 1.5], [-0.3, 0.7]]) {
+    const d = blobDist(x, y, s);
+    const T = blobThickness(x, y, s);
+    if (d < -0.02) assert.equal(T, 1, `deep inside at ${x},${y}`);
+    if (d > 0.02) assert.equal(T, 0, `well outside at ${x},${y}`);
+  }
+});
+
+// ── the Form ramp, hinged at 0.5 ───────────────────────────────────────
+
+// A stand-in organism: a disc of radius 0.5 at the origin, as a signed
+// distance. A known analytic shape keeps these tests about the RAMP rather
+// than about whatever blobfield happens to draw for a given seed.
+//
+// sample() is in BAKE coordinates, which nodalThickness reaches by dividing
+// world coordinates by ORG_SPAN — so in world terms this disc has radius
+// 0.5 * ORG_SPAN. discWorld is the expectation the ramp must reproduce.
+const DISC = { sample: (x, y) => Math.hypot(x, y) - 0.5 };
+const discWorld = (x, y) => Math.hypot(x, y) - 0.5 * ORG_SPAN;
+
+test('Form 1.0 is the pure organism, not the blob', () => {
+  // Compared against the disc across a grid rather than at a couple of points:
+  // the blob happens to agree with the disc at the origin, so a spot check
+  // passes whether or not the organism is actually being used.
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: DISC });
+  for (let i = 0; i <= 20; i++) {
+    for (let j = 0; j <= 20; j++) {
+      const x = -1 + (2 * i) / 20, y = -1 + (2 * j) / 20;
+      const d = discWorld(x, y);
+      if (Math.abs(d) < 0.02) continue;          // skip the edge band
+      assert.equal(nodalThickness(x, y, s), d < 0 ? 1 : 0, `at ${x},${y}`);
+    }
+  }
+});
+
+test('the ramp is continuous across the 0.5 hinge', () => {
+  const at = (form) => {
+    const s = Object.assign(idleState(), { form, amp: 0.5, organism: DISC });
+    return nodalThickness(0.35, 0.1, s);
+  };
+  assert.ok(Math.abs(at(0.499) - at(0.501)) < 0.05, 'no jump at the hinge');
+});
+
+test('the upper half stays crisp', () => {
+  // The regression test for the mid-Form blur. Walk x across the disc edge and
+  // count samples that are neither fully in nor fully out. A distance-space
+  // blend keeps that band a few samples wide; a mask blend smears it.
+  for (const form of [0.6, 0.75, 0.9, 1.0]) {
+    const s = Object.assign(idleState(), { form, amp: 0.5, organism: DISC });
+    let soft = 0;
+    for (let i = 0; i <= 400; i++) {
+      const T = nodalThickness(-1 + (2 * i) / 400, 0, s);
+      if (T > 0.01 && T < 0.99) soft++;
+    }
+    assert.ok(soft <= 12, `Form ${form} had ${soft} soft samples, expected <= 12`);
+  }
+});
+
+test('without an organism the ramp falls back to the blob', () => {
+  // Before the first bake lands there is no organism; the design must hold the
+  // blob rather than vanish.
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: null });
+  assert.ok(nodalThickness(0, 0, s) > 0, 'still draws something');
+});
+
+test('the plate edge is gone at Form 1.0 so forms can run off frame', () => {
+  const BIG = { sample: (x, y) => Math.hypot(x, y) - 5 };   // covers the frame
+  const s = Object.assign(idleState(), { form: 1, amp: 0.5, organism: BIG });
+  // Well outside the plate radius, but inside a portrait frame's corner.
+  assert.equal(nodalThickness(1.2, 0.9, s), 1, 'no dish edge at Form 1');
+});
+
+test('the plate edge still holds at Form 0', () => {
+  const s = Object.assign(idleState(), { form: 0, amp: 0.9 });
+  assert.equal(nodalThickness(1.6, 0, s), 0, 'dish edge intact for the field');
+});

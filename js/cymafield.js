@@ -37,7 +37,10 @@ export function idleState() {
     simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
     swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
     mass: 0,           // 0 = water on the NODES (a web), 1 = on the ANTINODES (islands)
-    form: 0,           // 0 = cymatic field, 1 = a metaball blob of fused lobes
+    form: 0,           // 0 = cymatic field, 0.5 = metaball blob, 1 = organism
+    // The baked organism, as { sample(x, y) -> signed distance }, or null
+    // before the first bake lands. See js/organism.js.
+    organism: null,
     phase: 0,
     // Emergence: 0 is an empty canvas, 1 is the fully flooded figure. The
     // renderer eases `grow` toward `growTarget`, so a design animates INTO
@@ -172,17 +175,44 @@ export function nodalThickness(x, y, s) {
   const soft = 0.10 * (s.simple ? 1 + s.simple : 1);
   const lobe = smoothstep(thr - soft, thr + soft, f);
   let T = (1 - (s.mass ?? 0)) * line + (s.mass ?? 0) * lobe;
-  // Cross-fade to the metaball form. At form = 1 the shape is pure blob; in
-  // between, the cymatic figure still reads through it.
-  if (s.form) {
+  // The Form ramp, hinged at 0.5:
+  //
+  //   0.0 -> 0.5   cymatic field -> blob   (mask blend, as before)
+  //   0.5 -> 1.0   blob -> organism        (DISTANCE blend)
+  //
+  // The upper half blends signed distances and thresholds ONCE at the end.
+  // Blending two already-thresholded masks — which is what the lower half does
+  // — is exactly what makes mid-Form look blurred: a half-and-half mask has no
+  // sharp transition left to find. Distances have no such problem, so the
+  // organism half is crisp at every position.
+  const form = s.form ?? 0;
+  if (form) {
     // smoothstep, not linear: a linear blend leaves a ghost web behind the
     // blob at Form 0.85-0.95.
-    const w = smoothstep(0, 1, s.form);
+    const w = smoothstep(0, 1, Math.min(1, form * 2));
     T = T * (1 - w) + blobThickness(x, y, s) * w;
+
+    if (form > 0.5 && s.organism) {
+      const upper = smoothstep(0, 1, (form - 0.5) * 2);
+      const dOrg = s.organism.sample(x / ORG_SPAN, y / ORG_SPAN) * ORG_SPAN;
+      const d = blobDist(x, y, s) * (1 - upper) + dOrg * upper;
+      // A fixed hairline: the CPU path has no screen to measure against, and
+      // the exporter contours the zero crossing regardless, so this only
+      // shapes antialiasing.
+      T = 1 - smoothstep(-0.004, 0.004, d);
+    }
   }
   // Soft plate boundary — the dish edge, not a hard crop.
+  //
+  // Released as Form crosses into the organism. A Chladni figure lives on a
+  // physical plate and must end at its rim, but the organism is a poster
+  // composition whose whole language is forms running off the frame. Holding
+  // the dish edge there would trap it in a disc and put the look out of reach
+  // at every slider setting.
   const r = Math.sqrt(x * x + y * y);
-  T *= 1 - smoothstep(1.02, 1.30, r);
+  const plate = 1 - smoothstep(1.02, 1.30, r);
+  const release = clamp01((form - 0.5) * 2);
+  T *= plate * (1 - release) + release;
   return T;
 }
 
@@ -193,7 +223,19 @@ export function nodalThickness(x, y, s) {
 export function reveal(x, y, s) {
   const g = s.grow ?? 1;
   const r = Math.sqrt(x * x + y * y);
-  return 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
+  const rev = 1 - smoothstep(g * 1.55 - 0.30, g * 1.55 + 0.04, r);
+  // Released for the organism, exactly as the plate edge is.
+  //
+  // Widening it was tried first and does not work: this is a fixed radius in
+  // WORLD units, but how much world is on screen depends on zoom — the chrome
+  // inset alone puts it at 0.52, so the frame corner sits at r ~ 3.7 rather
+  // than the 1.89 it reaches at zoom 1. No constant covers every zoom.
+  //
+  // The cost is that a submitted organism appears whole instead of flooding
+  // in. That is the right trade: emergence is the plate metaphor, and the
+  // poster it becomes is a static composition.
+  const release = clamp01(((s.form ?? 0) - 0.5) * 2);
+  return rev * (1 - release) + release;
 }
 
 // Water thickness. Nodal structure only — there is no separate droplet layer:
@@ -204,6 +246,13 @@ export function reveal(x, y, s) {
 export function thickness(x, y, s) {
   return clamp01(nodalThickness(x, y, s) * reveal(x, y, s));
 }
+
+// The organism is baked over y in [-1, 1], but the shader's world coordinate
+// spans +-3.15/2 down the viewport at zoom 1 (see main() in js/shader.js). So
+// world coordinates are divided by this before sampling the bake, which is
+// what makes the organism exactly fill the frame at zoom 1 instead of
+// occupying its middle 63% with CLAMP_TO_EDGE smear beyond.
+export const ORG_SPAN = 1.575;
 
 // ── metaball form ──────────────────────────────────────────────────────
 //
@@ -243,14 +292,22 @@ export function smin(a, b, k) {
   return b * (1 - h) + a * h - k * h * (1 - h);
 }
 
-export function blobThickness(x, y, s) {
+// The signed distance itself, kept separate from the threshold so the Form
+// ramp can blend it with the organism's distance BEFORE either is thresholded.
+// Blending two already-thresholded masks is what makes mid-Form look blurred:
+// a half-and-half mask has no sharp transition left to find.
+export function blobDist(x, y, s) {
   const cs = blobCircles(s);
   const k = 0.15 + 0.08 * (1 - (s.simple ?? 0));
   let d = Math.hypot(x - cs[0].x, y - cs[0].y) - cs[0].r;
   for (let i = 1; i < cs.length; i++) {
     d = smin(d, Math.hypot(x - cs[i].x, y - cs[i].y) - cs[i].r, k);
   }
-  return 1 - smoothstep(-0.012, 0.012, d);
+  return d;
+}
+
+export function blobThickness(x, y, s) {
+  return 1 - smoothstep(-0.012, 0.012, blobDist(x, y, s));
 }
 
 // ── audio → field ──────────────────────────────────────────────────────

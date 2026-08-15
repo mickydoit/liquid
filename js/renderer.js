@@ -1,5 +1,6 @@
-import { VERT, FRAG } from './shader.js?v=6ddb29f8';
-import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=6ddb29f8';
+import { VERT, FRAG } from './shader.js?v=2ffd3a4f';
+import { stepGrow, blobCircles, BLOB_MAX } from './cymafield.js?v=2ffd3a4f';
+import { packSDF } from './sdftex.js?v=2ffd3a4f';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -14,6 +15,7 @@ const UNIFORMS = [
   'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass', 'uForm', 'uBlob', 'uBlobN', 'uBlobK',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
+  'uOrganism', 'uOrgSize', 'uHasOrganism', 'uPxWorld',
 ];
 
 function compile(gl, type, src) {
@@ -70,6 +72,8 @@ export class LiquidRenderer {
     // Exports must not inherit it — see renderToCanvas.
     this.inset = [0, 0];
     this.insetZoom = 1;
+    this._orgTex = null;
+    this._orgSize = [1, 1];
     // Global scalar on material time: 1 while live, and the Motion control
     // while a design is held still. 0 freezes it completely.
     this.materialRate = 1;
@@ -130,12 +134,41 @@ export class LiquidRenderer {
     }
     this._dirty = true;
   }
+  // The organism arrives as a baked signed-distance grid rather than as GLSL.
+  // Keeping one CPU implementation is the point: a GLSL port would be a second
+  // source of truth, and bake()'s morphology cleanup — which is what produces
+  // the clean poster silhouettes — has no fragment-shader equivalent, so a
+  // ported preview would systematically differ from the export.
+  setOrganismSDF(grid, w, h) {
+    const gl = this.gl;
+    if (this._orgTex) { gl.deleteTexture(this._orgTex); this._orgTex = null; }
+    if (grid) {
+      const t = gl.createTexture();
+      gl.bindTexture(gl.TEXTURE_2D, t);
+      gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA,
+                    gl.UNSIGNED_BYTE, packSDF(grid, w, h));
+      // LINEAR so the distance interpolates between cells: that is what lets a
+      // 256-cell bake hold a clean edge well past 1:1 zoom.
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      this._orgTex = t;
+      this._orgSize = [w, h];
+    }
+    this._dirty = true;
+  }
+
   setFrameSink(fn) { this._frameSink = fn; }
 
   // `useInset` is false for exports: the chrome offset exists to dodge the
   // on-screen panel, and baking it into an exported image would leave the
   // design sitting off-centre with dead space on one side.
-  _uploadUniforms(gl, aspect, useInset = true) {
+  // `hPx` is the target's pixel height. It is needed for uPxWorld, which has
+  // to be measured against the surface actually being drawn — the canvas when
+  // previewing, the framebuffer when exporting.
+  _uploadUniforms(gl, aspect, useInset = true, hPx = 420) {
     const s = this.state, st = this.style, u = this.u;
     gl.uniform1f(u.uM, s.m); gl.uniform1f(u.uN, s.n);
     gl.uniform1f(u.uKr, s.kr); gl.uniform1f(u.uMa, s.ma);
@@ -189,6 +222,20 @@ export class LiquidRenderer {
     gl.uniform3fv(u.uGround, st.ground);
     gl.uniform3fv(u.uInk, st.ink);
     gl.uniform3fv(u.uDeep, st.deep);
+
+    gl.uniform1f(u.uHasOrganism, this._orgTex ? 1 : 0);
+    gl.uniform2fv(u.uOrgSize, this._orgSize);
+    if (this._orgTex) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._orgTex);
+      gl.uniform1i(u.uOrganism, 1);
+    }
+    // One pixel in WORLD units, computed rather than taken from fwidth: fwidth
+    // needs OES_standard_derivatives on WebGL1, the same extension-availability
+    // trap as float textures. main() maps p = (vUv - 0.5 - uPan) * 3.15 / uZoom
+    // and vUv spans 0..1 down the viewport, so this is exact.
+    const zoomV = this.zoom * (useInset ? this.insetZoom : 1);
+    gl.uniform1f(u.uPxWorld, 3.15 / (zoomV * Math.max(1, hPx)));
   }
 
   _draw() {
@@ -197,7 +244,7 @@ export class LiquidRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (!this.state) return;
-    this._uploadUniforms(gl, this.canvas.width / this.canvas.height);
+    this._uploadUniforms(gl, this.canvas.width / this.canvas.height, true, this.canvas.height);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -275,7 +322,7 @@ export class LiquidRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (this.state) {
-      this._uploadUniforms(gl, width / height, false);
+      this._uploadUniforms(gl, width / height, false, height);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     const px = new Uint8Array(width * height * 4);
