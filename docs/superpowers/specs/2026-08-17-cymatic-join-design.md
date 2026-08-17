@@ -215,6 +215,11 @@ ladder is the acceptance artefact; the user's eye on it is the gate.
 
 ## Open question, deliberately deferred
 
+**Decided 2026-08-17: build narrowest-first now.** It is cheaper, easier to
+judge, and leaves path-biased selection open as a replacement for step 4 if the
+ladder reads as scattered or overly uniform.
+
+
 `Join` ranks by channel width, so the joins land wherever the field pinches
 tightest. The reference's connected shapes instead chain into one *sweeping path*
 with islands either side. If the ladder shows the result reads as evenly
