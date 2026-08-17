@@ -16,10 +16,28 @@ import { buildJoinedField } from '../js/cymajoin.js';
 import { idleState } from '../js/cymafield.js';
 import { FORMATS } from '../js/bake.js';
 
-const dir = process.argv[2] ?? 'out/join';
-const STEPS = [0, 0.2, 0.4, 0.6, 0.8, 1.0];
+// Overrides, so a ladder can be re-rendered against different settings without
+// editing this file:
+//
+//   node tools/joinladder.mjs out/try --m=5 --mass=0.8 --simple=0.2 --amp=0.7
+//   node tools/joinladder.mjs out/try --join=0.55          (single step)
+//
+// Any key of the state object is settable. `--join=` replaces the whole ladder
+// with one step, which is the quick way to test a candidate.
+const argv = process.argv.slice(2);
+const dir = argv.find((a) => !a.startsWith('--')) ?? 'out/join';
+const OVERRIDE = Object.fromEntries(argv
+  .filter((a) => a.startsWith('--'))
+  .map((a) => a.replace(/^--/, '').split('='))
+  .map(([k, v]) => [k, Number(v)]));
+
+const STEPS = OVERRIDE.join !== undefined
+  ? [OVERRIDE.join]
+  : [0, 0.2, 0.4, 0.6, 0.8, 1.0];
 const MARGIN = 0.10;          // clear space around the design, as a fraction
-const PREVIEW_JOIN = 0.6;     // the candidate that also gets a material preview
+// The candidate that also gets a material preview. Follows --join= when a
+// single step is requested, so a one-off test always renders both views.
+const PREVIEW_JOIN = 0.6;
 
 // The regime the Join control is for, matched to the exports the user selected
 // in Figma (frame 10:142): a disc of roughly 40-60 rounded cells.
@@ -33,6 +51,7 @@ const BASE = {
   ...idleState(),
   m: 7, n: 6, kr: 14, ma: 7,
   mass: 0.95, simple: 0, amp: 0.5, grow: 1,
+  ...OVERRIDE,
 };
 
 const LABEL_SCALE = 3;
@@ -186,7 +205,7 @@ for (const [name, aspect, height] of [
     writeFileSync(flatFile, encodePNG(flat.width, flat.height, flat.rgb));
     console.log(`  ${flatFile}  necks=${necks.length}`);
 
-    if (Math.abs(join - PREVIEW_JOIN) < 1e-9) {
+    if (Math.abs(join - PREVIEW_JOIN) < 1e-9 || STEPS.length === 1) {
       const wet = withLabel(water(sample, S, width, height, aspect),
         width, height, `${label}   WATER PREVIEW`);
       const wetFile = `${dir}/water-${name}-${join.toFixed(1)}.png`;
