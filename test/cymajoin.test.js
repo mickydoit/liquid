@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   nearestCellTransform, measureChannels, selectJoins, DEGREE_CAP,
-  makeJoinedField, sdSegment, NECK_WIDTH, FILLET_K,
+  makeJoinedField, sdSegment, NECK_WIDTH, FILLET_K, cellClearance,
 } from '../js/cymajoin.js';
 
 // A 9x1 strip: one foreground cell at each end, seven background between.
@@ -227,13 +227,31 @@ test('the bake works at landscape as well as portrait', () => {
 // half the narrowest channel Join did NOT select — a selected channel is meant
 // to close, so measuring against it would pin the cap to the tightest gap in
 // the design and shrink every fillet to nothing.
-test('the fillet cap is half the narrowest UNSELECTED channel', () => {
-  const { unselected, necks, cellSize, filletCap } = buildJoinedField(islandState(0.8),
+// Each neck is capped by ITS OWN cells' tightest remaining channel, not by the
+// tightest one anywhere. A global cap is pinned by whichever pair in the whole
+// design happens to sit closest, which in a 46-cell field collapses every
+// fillet to nearly zero — unionRound degenerates to min(), the neck meets the
+// lobe at a hard corner, and the form reads as a tube butted onto a blob.
+test('each fillet is capped by its own cells local clearance', () => {
+  const { unselected, necks, cellSize } = buildJoinedField(islandState(0.8),
     { aspect: FORMATS.portrait, res: 256 });
   assert.ok(necks.length > 0 && unselected.length > 0, 'both sets are non-empty');
-  assert.ok(Math.abs(filletCap - unselected[0].gap * cellSize * 0.5) < 1e-12,
-    `cap ${filletCap} is not half the narrowest unselected channel ` +
-    `${unselected[0].gap * cellSize}`);
+
+  const clear = cellClearance(unselected);
+  let clamped = 0;
+  for (const nk of necks) {
+    const local = Math.min(clear.get(nk.a) ?? Infinity, clear.get(nk.b) ?? Infinity);
+    const expect = Math.min(FILLET_K * nk.r,
+      Number.isFinite(local) ? local * cellSize * 0.5 : Infinity);
+    assert.ok(Math.abs(nk.kf - expect) < 1e-12,
+      `neck ${nk.a}-${nk.b}: kf ${nk.kf} is not min(${FILLET_K * nk.r}, local)`);
+    if (nk.kf < FILLET_K * nk.r - 1e-12) clamped++;
+  }
+  // The rule must be genuinely LOCAL: under one global cap every neck would be
+  // clamped to the same value, so at least one reaching its full fillet is the
+  // evidence that clearances are read per pair.
+  assert.ok(clamped < necks.length,
+    'every neck was clamped — the cap is behaving globally, not locally');
 });
 
 // What the cap is FOR: the blend must not close channels Join did not select.

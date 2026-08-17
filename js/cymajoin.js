@@ -191,7 +191,20 @@ export function sdSegment(px, py, ax, ay, bx, by) {
 // Selected pairs, in raster coordinates, become bridge stubs in world units.
 // `toWorld(i, j)` converts a pixel to world space; `cellSize` is world units per
 // cell, which is what turns a gap measured in cells into a world radius.
-export function makeNecks(selected, toWorld, cellSize, inradii = null) {
+// The narrowest UNSELECTED channel each cell still has, in cells. A neck's
+// fillet must not reach across one of these and close it.
+export function cellClearance(unselected) {
+  const clear = new Map();
+  for (const p of unselected) {
+    for (const id of [p.a, p.b]) {
+      const cur = clear.get(id);
+      if (cur === undefined || p.gap < cur) clear.set(id, p.gap);
+    }
+  }
+  return clear;
+}
+
+export function makeNecks(selected, toWorld, cellSize, inradii = null, clearance = null) {
   return selected.map((p) => {
     const [ax, ay] = toWorld(p.ax, p.ay);
     const [bx, by] = toWorld(p.bx, p.by);
@@ -202,7 +215,21 @@ export function makeNecks(selected, toWorld, cellSize, inradii = null) {
       ? Math.min(inradii.get(p.a) ?? 0, inradii.get(p.b) ?? 0) * cellSize
       : gap;
     const r = Math.max(NECK_WIDTH * lobe, NECK_MIN_GAP_FRAC * gap);
-    return { ax, ay, bx, by, r, kf: FILLET_K * r };
+
+    // The fillet is capped LOCALLY, by the tightest unselected channel these two
+    // cells still have — not by the tightest one anywhere in the design.
+    //
+    // A global cap is pinned by whichever pair in the whole field happens to sit
+    // closest, and in a 46-cell design that collapses every fillet to nearly
+    // zero. unionRound then degenerates to min(), the neck meets the lobe at a
+    // hard corner, and the form reads as a tube butted onto a blob rather than
+    // as one pinched shape — visible immediately in a shaded preview and almost
+    // invisible in a flat silhouette.
+    const local = clearance
+      ? Math.min(clearance.get(p.a) ?? Infinity, clearance.get(p.b) ?? Infinity) * cellSize
+      : Infinity;
+    const kf = Math.min(FILLET_K * r, Number.isFinite(local) ? local * 0.5 : Infinity);
+    return { a: p.a, b: p.b, ax, ay, bx, by, r, kf };
   });
 }
 
@@ -239,7 +266,16 @@ export function makeJoinedField(base, necks, filletCap = Infinity) {
 // Build the joined field for a state, baking once rather than evaluating per
 // pixel per frame. Both the renderer and the vector export read this one
 // artefact, so the joined path adds no new CPU/GLSL mirror.
-export function buildJoinedField(state, { aspect = FORMATS.portrait, res = 1024 } = {}) {
+// `extent` is the world half-height the raster covers: y spans [-extent, extent]
+// and x spans [-aspect*extent, aspect*extent].
+//
+// It must cover the WHOLE design, not just the on-screen frame. The plate mask
+// runs out to r = 1.30 (cymafield.js:201), so a bake at extent 1 clips every
+// cell beyond the frame — and clipping before the channels are measured invents
+// boundaries that are not in the design, which is worse than cropping a picture.
+export function buildJoinedField(
+  state, { aspect = FORMATS.portrait, res = 1024, extent = 1 } = {},
+) {
   const analytic = makeWaterField(state);
   const join = state.join ?? 0;
 
@@ -247,17 +283,25 @@ export function buildJoinedField(state, { aspect = FORMATS.portrait, res = 1024 
   const w = aspect >= 1 ? res : Math.round(res * aspect);
   const h = aspect >= 1 ? Math.round(res / aspect) : res;
   const total = w * h;
-  const cellSize = 2 / h;                       // world units per cell
+  const cellSize = (2 * extent) / h;            // world units per cell
   const toWorld = (i, j) => [
-    (-1 + (2 * (i + 0.5)) / w) * aspect,
-    1 - (2 * (j + 0.5)) / h,
+    (-1 + (2 * (i + 0.5)) / w) * aspect * extent,
+    (1 - (2 * (j + 0.5)) / h) * extent,
   ];
+  // gridSampler's window is x in [-aspect, aspect], y in [-1, 1], so world
+  // points are normalised into it. The VALUES it returns are still true world
+  // distances, because cellSize already carries `extent`.
+  const sampler = (grid) => {
+    const g = gridSampler(grid, w, h, aspect);
+    return (x, y) => g(x / extent, y / extent);
+  };
 
   if (join <= 0) {
     // Identity. Returning the analytic field ITSELF rather than a bake of it is
     // what makes Join 0 bit-identical to today rather than merely close.
     return {
-      sample: analytic, grid: null, w, h, aspect, cellSize, necks: [], pairs: [],
+      sample: analytic, grid: null, w, h, aspect, extent, cellSize,
+      necks: [], pairs: [], unselected: [], filletCap: Infinity,
     };
   }
 
@@ -276,25 +320,24 @@ export function buildJoinedField(state, { aspect = FORMATS.portrait, res = 1024 
   const pairs = measureChannels(mask, w, h);
   const selected = selectJoins(pairs, join);
 
+  // A channel Join selected is MEANT to close, so it is excluded from the
+  // clearances the fillets are capped against.
+  const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
+  const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
+
   // The base for the fillet must be a true DISTANCE — see makeJoinedField.
   const edtCells = signedEdt(mask, w, h);
   const { labels } = labelComponents(mask, w, h, 8);
   const inradii = cellInradii(mask, w, h, edtCells, labels);
-  const necks = makeNecks(selected, toWorld, cellSize, inradii);
+  const necks = makeNecks(selected, toWorld, cellSize, inradii,
+    cellClearance(unselected));
 
-  // Half the narrowest channel Join did NOT select.
-  //
-  // The cap exists to stop the blend closing channels by itself, and a channel
-  // that was selected is meant to close — measuring against it instead pins the
-  // cap to the tightest gap in the design and shrinks every fillet to nothing
-  // as soon as one pair is very close.
-  const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
-  const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
-  const filletCap = unselected.length ? unselected[0].gap * cellSize * 0.5 : Infinity;
+  // Each neck now carries its own cap, so no global one is applied.
+  const filletCap = Infinity;
 
   const dist = new Float64Array(total);
   for (let i = 0; i < total; i++) dist[i] = edtCells[i] * cellSize;
-  const distSample = gridSampler(dist, w, h, aspect);
+  const distSample = sampler(dist);
   const joined = makeJoinedField(distSample, necks, filletCap);
 
   // Where the necks changed nothing, keep the ANALYTIC value. Thresholding to a
@@ -316,7 +359,7 @@ export function buildJoinedField(state, { aspect = FORMATS.portrait, res = 1024 
   }
 
   return {
-    sample: gridSampler(grid, w, h, aspect),
-    grid, w, h, aspect, cellSize, necks, pairs, unselected, filletCap,
+    sample: sampler(grid),
+    grid, w, h, aspect, extent, cellSize, necks, pairs, unselected, filletCap,
   };
 }

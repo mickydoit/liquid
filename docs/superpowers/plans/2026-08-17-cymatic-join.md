@@ -943,6 +943,17 @@ git commit -m "feat: export the joined field when Join is above zero"
 
 ### Task 8: SDF texture and the shader path
 
+> **OPEN RISK — bake latency is unresolved, not accepted.** Task 5 measured
+> 190–261 ms for a res-1024 bake in node. That is a *headless* figure and must
+> not be read as "fast enough". In the browser it lands on the main thread on
+> settle, where 200 ms+ is a visible stall, and it will be worse on a laptop GPU
+> path with the tab busy. **Measure it in the running app as part of this task**
+> — `performance.now()` around the settle bake, on the real canvas aspect, at
+> the resolution actually used. If it stalls perceptibly, move the bake to a
+> worker (`js/sdftex.js` already transfers a plain `Float64Array` buffer, so the
+> boundary is straightforward). Do not close this task on the node timing alone.
+
+
 **Files:**
 - Create: `js/sdftex.js` (restore: `git show c912c07:js/sdftex.js > js/sdftex.js`)
 - Modify: `js/shader.js`, `js/renderer.js`
