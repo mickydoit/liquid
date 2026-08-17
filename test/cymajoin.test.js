@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { nearestCellTransform, measureChannels } from '../js/cymajoin.js';
+import {
+  nearestCellTransform, measureChannels, selectJoins, degreeCap,
+} from '../js/cymajoin.js';
 
 // A 9x1 strip: one foreground cell at each end, seven background between.
 function strip() {
@@ -78,4 +80,49 @@ test('channel measurement is unaffected by proximity to the raster edge', () => 
   const edge = measureChannels(discs(w, h, r, [[20, 9], [60, 9]]), w, h);
   assert.ok(Math.abs(open[0].gap - edge[0].gap) < 0.5,
     `open ${open[0].gap} vs edge ${edge[0].gap}`);
+});
+
+// Ten cells in a row, each gap slightly wider than the last.
+const CHAIN = Array.from({ length: 9 }, (_, i) => ({
+  a: i + 1, b: i + 2, gap: 10 + i, ax: 0, ay: 0, bx: 0, by: 0,
+}));
+
+test('Join 0 selects nothing', () => {
+  assert.deepEqual(selectJoins(CHAIN, 0), []);
+});
+
+test('selection is narrowest-first', () => {
+  const got = selectJoins(CHAIN, 0.35);
+  assert.ok(got.length > 0);
+  for (let i = 1; i < got.length; i++) {
+    assert.ok(got[i - 1].gap <= got[i].gap, 'accepted pairs stay sorted');
+  }
+  assert.equal(got[0].gap, 10, 'the narrowest gap is always taken first');
+});
+
+test('selected count rises monotonically with Join', () => {
+  let prev = -1;
+  for (let j = 0; j <= 1.0001; j += 0.1) {
+    const n = selectJoins(CHAIN, Math.min(j, 1)).length;
+    assert.ok(n >= prev, `count fell at Join ${j.toFixed(1)}: ${prev} -> ${n}`);
+    prev = n;
+  }
+});
+
+// The field-scaffold measurements found that ranking by channel width ALONE
+// chains four consecutive inner-band cells into one long arc, because channels
+// narrow toward the centre and the inner band owns the head of the sorted list.
+test('no cell exceeds its degree cap at any Join', () => {
+  for (let j = 0.05; j <= 1.0001; j += 0.05) {
+    const join = Math.min(j, 1);
+    const deg = new Map();
+    for (const p of selectJoins(CHAIN, join)) {
+      deg.set(p.a, (deg.get(p.a) ?? 0) + 1);
+      deg.set(p.b, (deg.get(p.b) ?? 0) + 1);
+    }
+    for (const [cell, d] of deg) {
+      assert.ok(d <= degreeCap(join),
+        `cell ${cell} had degree ${d} > cap ${degreeCap(join)} at Join ${join}`);
+    }
+  }
 });

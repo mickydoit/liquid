@@ -100,3 +100,31 @@ export function measureChannels(mask, w, h) {
   }
   return [...best.values()].sort((p, q) => p.gap - q.gap);
 }
+
+// How many necks any one cell may take.
+//
+// Sorting by channel width alone chains consecutive inner-band cells into a
+// single long arc, because channels narrow toward the centre and the inner band
+// therefore owns the head of the sorted list. The cap is what keeps the ramp
+// reading as necks between cells rather than as one merged mass, and it is also
+// what leaves islands unjoined at the top of the range.
+export function degreeCap(join) { return join > 0.5 ? 2 : 1; }
+
+// Take pairs narrowest-first until the Join budget is spent, skipping any pair
+// that would push either of its cells past the cap.
+export function selectJoins(pairs, join) {
+  if (join <= 0) return [];
+  const cap = degreeCap(join);
+  const want = Math.round(join * pairs.length);
+  const deg = new Map();
+  const out = [];
+  for (const p of pairs) {
+    if (out.length >= want) break;
+    const da = deg.get(p.a) ?? 0, db = deg.get(p.b) ?? 0;
+    if (da >= cap || db >= cap) continue;
+    deg.set(p.a, da + 1);
+    deg.set(p.b, db + 1);
+    out.push(p);
+  }
+  return out;
+}
