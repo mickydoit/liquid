@@ -1,6 +1,25 @@
 import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=87f2b33d';
 import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=87f2b33d';
 import { META_FRAME } from './metafield.js?v=87f2b33d';
+import { joinedField } from './cymajoin.js?v=87f2b33d';
+
+// The field the export contours.
+//
+// Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's boundary
+// draws both sides of every line and every curve arrives doubled. A metaball has
+// no spine, so it keeps its boundary.
+//
+// Above Join 0 the geometry is a bake, and the export reads the SAME baked grid
+// the screen does. Contouring the analytic field here instead would put necks on
+// screen that the SVG does not have.
+//
+// The outline variant keeps the centreline even when joined: a joined figure
+// still has nodal ribbons, and its spine is still where the outline belongs.
+function exportField(state, variant) {
+  if (variant === 'outline' && !isMeta(state)) return makeCentrelineField(state);
+  if (!isMeta(state) && (state.join ?? 0) > 0) return joinedField(state).sample;
+  return makeWaterField(state);
+}
 
 // How far past the page a metaball composition is contoured.
 //
@@ -49,14 +68,7 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
   const opts = org
     ? { width: org.width, height: org.height, bounds: org.bounds, margin: 0 }
     : bounds ? { width, height, bounds, margin: 0 } : { width, height };
-  // The outline traces the CENTRELINE, matching the on-screen outline view —
-  // tracing the water's boundary draws both sides of every ribbon and every
-  // curve arrives doubled. A blob has no spine, so it keeps its boundary.
-  // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
-  // boundary draws both sides of every line and every curve arrives doubled.
-  // A metaball has no spine, so it keeps its boundary.
-  const field = (variant === 'outline' && !isMeta(state))
-    ? makeCentrelineField(state) : makeWaterField(state);
+  const field = exportField(state, variant);
   const { rings } = fieldOutline(field, opts);
   const paths = rings.map((r, i) =>
     `    <path id="pool-${String(i + 1).padStart(3, '0')}" d="${ringToPath(r)}"/>`);
@@ -90,11 +102,7 @@ export function exportPDF({ state, width, height, ink, background, variant = 'fl
   const opts = org
     ? { width: org.width, height: org.height, bounds: org.bounds, margin: 0 }
     : bounds ? { width, height, bounds, margin: 0 } : { width, height };
-  // Detailed Cymatic traces the CENTRELINE — outlining a nodal ribbon's
-  // boundary draws both sides of every line and every curve arrives doubled.
-  // A metaball has no spine, so it keeps its boundary.
-  const field = (variant === 'outline' && !isMeta(state))
-    ? makeCentrelineField(state) : makeWaterField(state);
+  const field = exportField(state, variant);
   let { rings } = fieldOutline(field, opts);
   // Shift the guard band off the page before anything is measured in mm.
   if (org) rings = rings.map((r) => r.map(([x, y]) => [x - org.dx, y - org.dy]));

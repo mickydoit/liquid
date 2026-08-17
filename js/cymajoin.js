@@ -390,3 +390,39 @@ export function buildJoinedField(
     grid, w, h, aspect, extent, cellSize, necks, pairs, unselected, filletCap,
   };
 }
+
+// The bake window every consumer shares.
+//
+// FIXED, not derived from the output frame. The bake's cell size is
+// (2 * extent) / h, so a window keyed to the canvas or page aspect rasterises
+// the same design at different fineness and changes which cells connect —
+// measured at 66 cells portrait against 61 landscape. A design must not change
+// topology because the window was resized or the export was rotated.
+//
+// 1.40 always covers a Detailed Cymatic figure: the plate mask reaches zero by
+// r = 1.30 (cymafield.js:201), so nothing exists beyond it.
+export const CANON_EXTENT = 1.40;
+
+// Everything the baked geometry depends on. Anything absent here can change
+// without invalidating the cache, so this list must stay complete.
+const FIELD_KEYS = [
+  'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'variation',
+];
+
+let cache = null;
+
+// The joined field for a state, baked once and reused.
+//
+// Single-entry: only one design is on screen at a time, and the screen and the
+// export ask for the same one within a few milliseconds of each other. Without
+// this, exporting would repeat a bake the renderer just did.
+export function joinedField(state, { res = 1024 } = {}) {
+  const key = `${FIELD_KEYS.map((k) => state[k] ?? 0).join(',')}|${res}`;
+  if (cache && cache.key === key) return cache.value;
+  const value = buildJoinedField(state, { aspect: 1, res, extent: CANON_EXTENT });
+  cache = { key, value };
+  return value;
+}
+
+export function clearJoinCache() { cache = null; }

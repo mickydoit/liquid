@@ -101,3 +101,34 @@ test('an organism design exports a real outline, not a stub', () => {
   // A disc traced at 400x600 is hundreds of points, not a couple of moves.
   assert.ok(svg.length > 1000, `expected a real outline, got ${svg.length} bytes`);
 });
+
+// ── Cymatic Join ────────────────────────────────────────────────────────
+const islands = (join) => ({
+  ...idleState(), m: 7, n: 6, kr: 14, ma: 7,
+  mass: 0.95, simple: 0, amp: 0.5, grow: 1, join,
+});
+const subpaths = (svg) => (svg.match(/M/g) ?? []).length;
+
+test('Join 0 exports exactly what an absent Join does', () => {
+  const withZero = buildSVG({ state: islands(0), width: 900, height: 1350, ink: '#111' });
+  const noKey = { ...islands(0) };
+  delete noKey.join;
+  const without = buildSVG({ state: noKey, width: 900, height: 1350, ink: '#111' });
+  assert.equal(withZero, without, 'an absent join and join 0 must agree');
+});
+
+test('joining merges rings, so the export has fewer subpaths', () => {
+  const open = buildSVG({ state: islands(0), width: 900, height: 1350, ink: '#111' });
+  const shut = buildSVG({ state: islands(0.8), width: 900, height: 1350, ink: '#111' });
+  assert.ok(subpaths(shut) < subpaths(open),
+    `joined ${subpaths(shut)} not fewer than unjoined ${subpaths(open)}`);
+});
+
+// Format must reframe the same cymatic event, never change which cells connect.
+// The bake is keyed to a canonical window for exactly this reason.
+test('portrait and landscape exports share one topology', () => {
+  const p = buildSVG({ state: islands(0.6), width: 900, height: 1350, ink: '#111' });
+  const l = buildSVG({ state: islands(0.6), width: 1350, height: 900, ink: '#111' });
+  assert.equal(subpaths(p), subpaths(l),
+    `portrait ${subpaths(p)} subpaths vs landscape ${subpaths(l)}`);
+});
