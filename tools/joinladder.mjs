@@ -153,7 +153,11 @@ mkdirSync(dir, { recursive: true });
 // One probe, shared by BOTH ladders, so portrait and landscape show the same
 // design at the same scale and differ only in crop.
 const ext = designExtent({ ...BASE, join: 0 });
-console.log(`design half-extent  x=${ext.hx.toFixed(3)}  y=${ext.hy.toFixed(3)}`);
+// One canonical square bake window, shared by every format and every Join step,
+// so the geometry is identical and only the crop changes.
+const CANON = Math.max(ext.hx, ext.hy) * (1 + MARGIN);
+console.log(`design half-extent  x=${ext.hx.toFixed(3)}  y=${ext.hy.toFixed(3)}`
+  + `  canonical bake window +-${CANON.toFixed(3)}`);
 
 for (const [name, aspect, height] of [
   ['portrait', FORMATS.portrait, 1200],
@@ -164,7 +168,15 @@ for (const [name, aspect, height] of [
   console.log(`${name}: frame half-height ${S.toFixed(3)}  ${width}x${height}`);
 
   for (const join of STEPS) {
-    const built = buildJoinedField({ ...BASE, join }, { aspect, res: 1024, extent: S });
+    // Baked on the CANONICAL square window, not on this format's frame.
+    //
+    // The bake's cell size is (2 * extent) / h, so letting the output format set
+    // `extent` rasterises the same design at different fineness per format:
+    // measured, portrait resolved 66 cells and landscape 61, giving 38 necks
+    // against 35. Format would then decide which cells connect, when all it
+    // should decide is the crop. One bake, many frames.
+    const built = buildJoinedField({ ...BASE, join },
+      { aspect: 1, res: 1024, extent: CANON });
     const { sample, necks } = built;
     const label = `JOIN ${join.toFixed(1)}   NECKS ${necks.length}`;
 

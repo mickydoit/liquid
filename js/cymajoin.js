@@ -166,6 +166,29 @@ export const FILLET_K = 0.85;
 // A neck must still physically span its channel however small the cells are.
 export const NECK_MIN_GAP_FRAC = 0.6;
 
+// The smallest cell that may take a neck at all, as a fraction of the design's
+// MEDIAN cell inradius.
+//
+// A neck is a fraction of the smaller cell it joins, so joining a speck forces
+// a thread. On the reference design the inradii run 1.0, 1.0, 1.0, 1.0, 1.4,
+// 2.0, 2.0, 3.6, 3.6, 4.2, 4.2 and then jump to 8.0 against a median of 28 —
+// the specks are the starburst petals at the modal centre, and there is a clean
+// break below about a quarter of the median. Cells under the threshold stay as
+// isolated forms, which is what they should read as.
+export const MIN_CELL_FRAC = 0.25;
+
+export function medianInradius(inradii) {
+  const v = [...inradii.values()].sort((a, b) => a - b);
+  return v.length ? v[Math.floor(v.length / 2)] : 0;
+}
+
+// Pairs whose smaller cell is big enough to carry a visibly liquid neck.
+// Rejected pairs are SKIPPED, never joined with a thinner neck.
+export function viablePairs(pairs, inradii) {
+  const floor = MIN_CELL_FRAC * medianInradius(inradii);
+  return pairs.filter((p) => Math.min(inradii.get(p.a) ?? 0, inradii.get(p.b) ?? 0) >= floor);
+}
+
 // The largest inscribed radius within each cell, in cells. Read from the inside
 // half of the signed EDT, which already measures exactly this.
 export function cellInradii(mask, w, h, signed, labels) {
@@ -317,18 +340,22 @@ export function buildJoinedField(
     }
   }
 
-  const pairs = measureChannels(mask, w, h);
-  const selected = selectJoins(pairs, join);
-
-  // A channel Join selected is MEANT to close, so it is excluded from the
-  // clearances the fillets are capped against.
-  const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
-  const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
-
   // The base for the fillet must be a true DISTANCE — see makeJoinedField.
   const edtCells = signedEdt(mask, w, h);
   const { labels } = labelComponents(mask, w, h, 8);
   const inradii = cellInradii(mask, w, h, edtCells, labels);
+
+  const pairs = measureChannels(mask, w, h);
+  const viable = viablePairs(pairs, inradii);
+  const selected = selectJoins(viable, join);
+
+  // Clearances are measured against every channel that is NOT closing — which
+  // includes the pairs rejected as too small to join. They are still open
+  // channels, and a fillet that swallowed one would put back exactly the
+  // thread-like connection the rejection was meant to avoid.
+  const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
+  const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
+
   const necks = makeNecks(selected, toWorld, cellSize, inradii,
     cellClearance(unselected));
 
