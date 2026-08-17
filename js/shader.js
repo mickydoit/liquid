@@ -27,6 +27,9 @@ uniform int uMetaN;
 uniform float uMetaK;       // fillet radius for necks within a cluster
 uniform float uMetaScale;   // Scale/crop, a true zoom of the finished artwork
 uniform float uMode;        // 0 = Detailed Cymatic, 1 = Metaball Cymatic
+uniform sampler2D uJoinTex; // baked joined field, RGBA8, distance packed in R+G
+uniform float uJoinOn;      // 0 = analytic cymatic path, 1 = read the bake
+uniform float uJoinExtent;  // world half-size the bake covers
 uniform float uView;        // 0 = water, 1 = filled flat, 2 = outline only
 uniform float uLineW;       // outline stroke width, in world units
 uniform sampler2D uBackTex; // optional backdrop the water refracts
@@ -178,6 +181,40 @@ float nodalAt(vec2 p) {
 // arrives as liquid spreading into the pattern rather than being switched on.
 // At uGrow = 0 nothing is visible — that is the resting state now, instead of
 // a scatter of unrelated droplets sitting over the figure.
+// ── Cymatic Join ───────────────────────────────────────────────────────
+//
+// A filleted neck needs to know which cell is which, which is a whole-image
+// job — so above Join 0 the geometry is baked once on the CPU and read here.
+// This is the only path in the shader that is not a mirror of cymafield.js:
+// there is one geometry, and both the screen and the vector export read it.
+
+// MIRRORS unpackDistance() in js/sdftex.js. WebGL1 has no guaranteed float
+// textures, so the distance is packed into 16 bits across R and G. These are
+// one format split across two languages.
+const float JOIN_RANGE = 2.0;
+
+float joinDistf(vec2 p) {
+  // The bake is a SQUARE canonical window, so u and v share one divisor. Row 0
+  // of the grid is y = +extent, and texImage2D puts row 0 at v = 0.
+  vec2 uv = vec2(0.5 + p.x / (2.0 * uJoinExtent),
+                 0.5 - p.y / (2.0 * uJoinExtent));
+  vec4 t = texture2D(uJoinTex, uv);
+  return (t.r + t.g / 255.0) * 2.0 * JOIN_RANGE - JOIN_RANGE;
+}
+
+// Distance -> the same coverage scale the analytic path produces.
+//
+// It must cross WATER_EDGE (0.08) EXACTLY at the surface, because the flat view
+// thresholds there and the exporter contours there. Inside it climbs to 1 over a
+// fixed depth so the material has something to shade; outside it falls to 0
+// within a pixel so the edge stays crisp.
+float joinCoverage(vec2 p) {
+  float d = joinDistf(p);
+  float edge = max(uPxWorld, 0.0015);
+  if (d < 0.0) return 0.08 + 0.92 * clamp(-d / 0.06, 0.0, 1.0);
+  return 0.08 * (1.0 - clamp(d / edge, 0.0, 1.0));
+}
+
 float waterAt(vec2 p) {
   // Two generators, routed — not blended. Metaball Cymatic is exempt from the
   // emergence mask: that mask is a fixed radius in WORLD units while how much
@@ -186,6 +223,9 @@ float waterAt(vec2 p) {
   if (uMode > 0.5) {
     return clamp(1.0 - smoothstep(-uPxWorld, uPxWorld, metaDistf(p)), 0.0, 1.0);
   }
+  // The bake already contains the plate mask and the emergence state it was
+  // taken at, so it is returned whole rather than multiplied by reveal again.
+  if (uJoinOn > 0.5) return clamp(joinCoverage(p), 0.0, 1.0);
   float reveal = 1.0 - smoothstep(uGrow * 1.55 - 0.30, uGrow * 1.55 + 0.04, length(p));
   return clamp(nodalAt(p) * reveal, 0.0, 1.0);
 }

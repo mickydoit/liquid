@@ -1,6 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=87f2b33d';
-import { stepGrow, isMeta } from './cymafield.js?v=87f2b33d';
-import { metaSolve, META_MAX } from './metafield.js?v=87f2b33d';
+import { VERT, FRAG } from './shader.js?v=8209e2a8';
+import { stepGrow, isMeta } from './cymafield.js?v=8209e2a8';
+import { metaSolve, META_MAX } from './metafield.js?v=8209e2a8';
+import { joinedField, CANON_EXTENT } from './cymajoin.js?v=8209e2a8';
+import { packSDF } from './sdftex.js?v=8209e2a8';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -8,12 +10,20 @@ import { metaSolve, META_MAX } from './metafield.js?v=87f2b33d';
 // program — there is no scene, no camera, no geometry to manage — so a scene
 // graph would be several hundred KB of dependency doing nothing.
 
+// Everything the joined bake depends on. A change to any of these invalidates
+// the uploaded texture; a change to anything else must not.
+const JOIN_KEYS = [
+  'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'variation',
+];
+
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
   'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass',
   'uMeta', 'uMetaRC', 'uMetaN', 'uMetaK', 'uMetaScale', 'uMode',
+  'uJoinTex', 'uJoinOn', 'uJoinExtent',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
   'uPxWorld',
@@ -80,6 +90,9 @@ export class LiquidRenderer {
     this._tick = 0;
     this._frameSink = null;
     this._dirty = true;
+    this._joinTex = null;
+    this._joinKey = null;
+    this.joinBakeMs = 0;
 
     this.style = {
       gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
@@ -140,6 +153,48 @@ export class LiquidRenderer {
   }
   setFrameSink(fn) { this._frameSink = fn; }
 
+  // Upload the joined bake, if this design needs one and does not already have
+  // it. Returns true when the shader should read the texture.
+  //
+  // ONLY on a settled design. Segmenting and EDT-ing a 1024^2 raster takes
+  // ~200ms in node and cannot run per frame, so while audio is driving the
+  // geometry ('live-active') the analytic path is shown and Join appears the
+  // moment the design settles. The bake is keyed to a CANONICAL window, never to
+  // the canvas, so resizing the window cannot change which cells connect.
+  _ensureJoin() {
+    const s = this.state;
+    if (!s || isMeta(s) || (s.join ?? 0) <= 0) return false;
+    if (this.anim === 'live-active' || this.anim === 'idle') return false;
+
+    const key = JOIN_KEYS.map((k) => s[k] ?? 0).join(',');
+    if (this._joinKey === key) return true;
+
+    const gl = this.gl;
+    const t0 = performance.now();
+    const { grid, w, h } = joinedField(s);
+    const px = packSDF(grid, w, h);
+    const ms = performance.now() - t0;
+
+    if (!this._joinTex) this._joinTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._joinTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    // NPOT-safe, and CLAMP_TO_EDGE so a sample past the window cannot wrap the
+    // far side of the design into view.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+
+    this._joinKey = key;
+    this.joinBakeMs = ms;
+    // Logged rather than swallowed: this figure is the open question about
+    // whether the bake needs a worker, and it can only be answered on the main
+    // thread in a real browser.
+    console.info(`[liquid] Join bake ${ms.toFixed(0)}ms  ${w}x${h}`);
+    return true;
+  }
+
   // `useInset` is false for exports: the chrome offset exists to dodge the
   // on-screen panel, and baking it into an exported image would leave the
   // design sitting off-centre with dead space on one side.
@@ -171,6 +226,15 @@ export class LiquidRenderer {
     s.aspect = aspect;
     const meta = isMeta(s);
     gl.uniform1f(u.uMode, meta ? 1 : 0);
+
+    const joinOn = this._ensureJoin();
+    gl.uniform1f(u.uJoinOn, joinOn ? 1 : 0);
+    gl.uniform1f(u.uJoinExtent, CANON_EXTENT);
+    if (joinOn) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._joinTex);
+      gl.uniform1i(u.uJoinTex, 1);
+    }
     if (meta) {
       const { balls, blendR, scale } = metaSolve(s);
       const xy = this._metaArr || (this._metaArr = new Float32Array(META_MAX * 4));

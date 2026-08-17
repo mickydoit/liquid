@@ -186,3 +186,7 @@ test('grow settles exactly at its target, and drains back when it returns to 0',
   for (let i = 0; i < 200; i++) stepGrow(s, 0.05);
   assert.equal(s.grow, 0, 'Clear must drain the figure back out');
 });
+
+test('Join defaults to off, so every existing design is unchanged', () => {
+  assert.equal(idleState().join, 0);
+});
