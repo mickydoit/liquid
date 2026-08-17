@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   nearestCellTransform, measureChannels, selectJoins, degreeCap,
+  makeJoinedField, sdSegment, NECK_WIDTH, FILLET_K,
 } from '../js/cymajoin.js';
 
 // A 9x1 strip: one foreground cell at each end, seven background between.
@@ -125,4 +126,60 @@ test('no cell exceeds its degree cap at any Join', () => {
         `cell ${cell} had degree ${d} > cap ${degreeCap(join)} at Join ${join}`);
     }
   }
+});
+
+// Two unit discs centred at (-1.5, 0) and (1.5, 0): surfaces 1.0 apart.
+const twoDiscs = (x, y) =>
+  Math.min(Math.hypot(x + 1.5, y) - 1, Math.hypot(x - 1.5, y) - 1);
+
+const NECK = [{
+  ax: -0.5, ay: 0, bx: 0.5, by: 0, r: NECK_WIDTH * 1.0, kf: FILLET_K * 1.0,
+}];
+
+test('sdSegment measures distance to the segment, not the infinite line', () => {
+  assert.ok(Math.abs(sdSegment(0, 2, -1, 0, 1, 0) - 2) < 1e-9, 'above the middle');
+  assert.ok(Math.abs(sdSegment(3, 0, -1, 0, 1, 0) - 2) < 1e-9, 'past the end cap');
+});
+
+test('the neck bridges the gap: the midpoint becomes inside', () => {
+  assert.ok(twoDiscs(0, 0) > 0, 'unjoined, the midpoint is outside');
+  const joined = makeJoinedField(twoDiscs, NECK, Infinity);
+  assert.ok(joined(0, 0) < 0, 'joined, the midpoint is inside');
+});
+
+// A fillet legitimately deepens the interior near the neck — that is what
+// unioning a stub into the shape means. What must NOT move is the outline away
+// from the junction, so these are boundary points on the far side of each disc
+// plus genuinely distant background.
+test('the outline is untouched away from the neck', () => {
+  const joined = makeJoinedField(twoDiscs, NECK, Infinity);
+  for (const [x, y] of [[-2.5, 0], [2.5, 0], [0, 5], [0, -3], [-4, -4]]) {
+    assert.ok(Math.abs(joined(x, y) - twoDiscs(x, y)) < 1e-9,
+      `field moved at ${x},${y}: ${joined(x, y)} vs ${twoDiscs(x, y)}`);
+  }
+});
+
+// The reference's waist pinches INWARD on a tangent arc. A polynomial smin
+// bulges outward there and reads as soap bubbles. Measuring the boundary's
+// half-width along the neck is what tells them apart: a fillet's half-width must
+// be at its MINIMUM at the neck's midpoint.
+test('the junction is concave — the waist is a minimum, not a bulge', () => {
+  const joined = makeJoinedField(twoDiscs, NECK, Infinity);
+  const halfWidth = (x) => {
+    let y = 0;
+    while (y < 4 && joined(x, y) < 0) y += 0.002;
+    return y;
+  };
+  const mid = halfWidth(0);
+  assert.ok(mid > 0, 'the neck exists at the midpoint');
+  assert.ok(mid < halfWidth(0.45), 'widens toward the right disc');
+  assert.ok(mid < halfWidth(-0.45), 'widens toward the left disc');
+});
+
+test('the fillet cap limits the blend', () => {
+  const wide = makeJoinedField(twoDiscs, NECK, Infinity);
+  const capped = makeJoinedField(twoDiscs, NECK, 0.05);
+  // A smaller fillet removes less material from the corner, so the capped field
+  // is never more inside than the uncapped one.
+  assert.ok(capped(0.5, 0.9) >= wide(0.5, 0.9) - 1e-12);
 });

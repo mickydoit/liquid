@@ -7,6 +7,7 @@
 // of the field; it has to be a geometric operation on identified cells, which
 // is a whole-image job and bakes rather than evaluating per pixel per frame.
 import { labelComponents } from './bake.js?v=87f2b33d';
+import { unionRound } from './blobfield.js?v=87f2b33d';
 
 // Nearest foreground cell for every pixel, by two-pass vector propagation
 // (Danielsson). Exact on convex arrangements and within a fraction of a cell
@@ -127,4 +128,61 @@ export function selectJoins(pairs, join) {
     out.push(p);
   }
   return out;
+}
+
+// Neck half-width and fillet radius, both as fractions of the measured channel.
+// Tuned against the reference posters: the neck is appreciably narrower than
+// the lobes it joins, and the fillet is large enough that the junction reads as
+// a tangent arc rather than a rounded-off corner.
+export const NECK_WIDTH = 0.55;
+export const FILLET_K = 0.90;
+
+export function sdSegment(px, py, ax, ay, bx, by) {
+  const vx = bx - ax, vy = by - ay;
+  const wx = px - ax, wy = py - ay;
+  const L2 = vx * vx + vy * vy;
+  const t = L2 <= 0 ? 0 : Math.max(0, Math.min(1, (wx * vx + wy * vy) / L2));
+  return Math.hypot(px - (ax + t * vx), py - (ay + t * vy));
+}
+
+// Selected pairs, in raster coordinates, become bridge stubs in world units.
+// `toWorld(i, j)` converts a pixel to world space; `cellSize` is world units per
+// cell, which is what turns a gap measured in cells into a world radius.
+export function makeNecks(selected, toWorld, cellSize) {
+  return selected.map((p) => {
+    const [ax, ay] = toWorld(p.ax, p.ay);
+    const [bx, by] = toWorld(p.bx, p.by);
+    const gap = p.gap * cellSize;
+    return { ax, ay, bx, by, r: NECK_WIDTH * gap, kf: FILLET_K * gap };
+  });
+}
+
+// The joined field: the base distance, unioned with each neck stub through a
+// CIRCULAR FILLET.
+//
+// Not a polynomial smin. A fillet cuts a concave tangent arc in the corner where
+// the two surfaces meet, which is the waist this look is built on; smin bulges
+// convexly there and reads as soap bubbles (js/shader.js:89).
+//
+// `base` must be a true signed DISTANCE. makeWaterField returns
+// `iso - thickness`, whose gradient is nowhere near 1, and unionRound computes a
+// fillet of radius kf in the metric of its arguments — feeding it a non-distance
+// produces a fillet of the wrong size.
+//
+// `filletCap` bounds every fillet radius. A blend expressed in raster widths is
+// an absolute size, so at coarse rasters an uncapped blend closes channels by
+// itself and Join stops controlling the topology.
+export function makeJoinedField(base, necks, filletCap = Infinity) {
+  return (x, y) => {
+    let d = base(x, y);
+    for (const nk of necks) {
+      const kf = Math.min(nk.kf, filletCap);
+      const ds = sdSegment(x, y, nk.ax, nk.ay, nk.bx, nk.by) - nk.r;
+      // Beyond kf of both surfaces the fillet union is identical to min(), so
+      // skipping there is an optimisation and not an approximation.
+      if (ds > kf && d > kf) { d = Math.min(d, ds); continue; }
+      d = unionRound(d, ds, kf);
+    }
+    return d;
+  };
 }
