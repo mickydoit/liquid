@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  nearestCellTransform, measureChannels, selectJoins, degreeCap,
+  nearestCellTransform, measureChannels, selectJoins, DEGREE_CAP,
   makeJoinedField, sdSegment, NECK_WIDTH, FILLET_K,
 } from '../js/cymajoin.js';
 
@@ -122,8 +122,8 @@ test('no cell exceeds its degree cap at any Join', () => {
       deg.set(p.b, (deg.get(p.b) ?? 0) + 1);
     }
     for (const [cell, d] of deg) {
-      assert.ok(d <= degreeCap(join),
-        `cell ${cell} had degree ${d} > cap ${degreeCap(join)} at Join ${join}`);
+      assert.ok(d <= DEGREE_CAP,
+        `cell ${cell} had degree ${d} > cap ${DEGREE_CAP} at Join ${join}`);
     }
   }
 });
@@ -182,4 +182,105 @@ test('the fillet cap limits the blend', () => {
   // A smaller fillet removes less material from the corner, so the capped field
   // is never more inside than the uncapped one.
   assert.ok(capped(0.5, 0.9) >= wide(0.5, 0.9) - 1e-12);
+});
+
+// ── the bake ────────────────────────────────────────────────────────────
+import { buildJoinedField } from '../js/cymajoin.js';
+import { idleState, makeWaterField } from '../js/cymafield.js';
+import { FORMATS, labelComponents } from '../js/bake.js';
+
+// A design in the island regime — the look the Join control is for.
+function islandState(join) {
+  return { ...idleState(), mass: 0.92, simple: 0.55, amp: 0.62, grow: 1, join };
+}
+
+test('Join 0 leaves the water field numerically identical', () => {
+  const s = islandState(0);
+  const analytic = makeWaterField(s);
+  const { sample } = buildJoinedField(s, { aspect: FORMATS.portrait, res: 256 });
+  for (const [x, y] of [[0, 0], [0.3, -0.4], [-0.7, 0.55], [0.9, 0.9]]) {
+    assert.ok(Math.abs(sample(x, y) - analytic(x, y)) < 1e-12,
+      `diverged at ${x},${y}`);
+  }
+});
+
+test('raising Join adds necks', () => {
+  const count = (join) => buildJoinedField(islandState(join),
+    { aspect: FORMATS.portrait, res: 256 }).necks.length;
+  assert.equal(count(0), 0);
+  assert.ok(count(0.6) > count(0.2), 'more necks at higher Join');
+});
+
+// A bake's resolution is its LONG edge, so landscape gives the short edge
+// res/aspect cells. Portrait-only testing has hidden a quantization bug here
+// before.
+test('the bake works at landscape as well as portrait', () => {
+  for (const aspect of [FORMATS.portrait, FORMATS.landscape]) {
+    const { w, h, sample } = buildJoinedField(islandState(0.5), { aspect, res: 256 });
+    assert.equal(Math.max(w, h), 256, 'res is the long edge');
+    assert.ok(Number.isFinite(sample(0, 0)), `sample finite at aspect ${aspect}`);
+  }
+});
+
+// A blend expressed in raster widths is an absolute size, so an uncapped blend
+// closes channels by itself and Join stops controlling the topology. The cap is
+// half the narrowest channel Join did NOT select — a selected channel is meant
+// to close, so measuring against it would pin the cap to the tightest gap in
+// the design and shrink every fillet to nothing.
+test('the fillet cap is half the narrowest UNSELECTED channel', () => {
+  const { unselected, necks, cellSize, filletCap } = buildJoinedField(islandState(0.8),
+    { aspect: FORMATS.portrait, res: 256 });
+  assert.ok(necks.length > 0 && unselected.length > 0, 'both sets are non-empty');
+  assert.ok(Math.abs(filletCap - unselected[0].gap * cellSize * 0.5) < 1e-12,
+    `cap ${filletCap} is not half the narrowest unselected channel ` +
+    `${unselected[0].gap * cellSize}`);
+});
+
+// What the cap is FOR: the blend must not close channels Join did not select.
+// Each neck may merge at most two components, so the joined field can never have
+// fewer components than (cells - necks). Fewer means the blend closed something
+// on its own.
+test('the blend closes no channel Join did not select', () => {
+  const res = 256;
+  const aspect = FORMATS.portrait;
+  const { sample, necks, pairs } = buildJoinedField(islandState(0.8), { aspect, res });
+  assert.ok(necks.length > 0 && pairs.length > necks.length);
+
+  const raster = (field) => {
+    const w = Math.round(res * aspect), h = res;
+    const m = new Uint8Array(w * h);
+    for (let j = 0; j < h; j++) {
+      for (let i = 0; i < w; i++) {
+        const x = (-1 + (2 * (i + 0.5)) / w) * aspect;
+        const y = 1 - (2 * (j + 0.5)) / h;
+        m[j * w + i] = field(x, y) < 0 ? 1 : 0;
+      }
+    }
+    return { m, w, h };
+  };
+
+  const before = buildJoinedField(islandState(0), { aspect, res });
+  const a = raster(before.sample);
+  const b = raster(sample);
+  const cells = labelComponents(a.m, a.w, a.h, 8).sizes.filter((v) => v > 20).length;
+  const after = labelComponents(b.m, b.w, b.h, 8).sizes.filter((v) => v > 20).length;
+
+  assert.ok(after >= cells - necks.length,
+    `components fell to ${after}, below ${cells} - ${necks.length} necks — ` +
+    'the blend closed channels Join did not select');
+});
+
+// The budget scales against what the cap ACTUALLY allows, not the raw pair
+// count. Scaling against the raw count saturated the control above ~0.3:
+// measured neck counts were 21, 21, 43, 43, 43 across Join 0.2..1.0.
+test('Join spans the whole reachable range without saturating', () => {
+  const counts = [0.2, 0.4, 0.6, 0.8, 1.0].map((j) =>
+    buildJoinedField(islandState(j), { aspect: FORMATS.portrait, res: 256 }).necks.length);
+  const unique = new Set(counts);
+  assert.ok(unique.size >= 4,
+    `Join saturated — only ${unique.size} distinct neck counts: ${counts}`);
+  for (let i = 1; i < counts.length; i++) {
+    assert.ok(counts[i] >= counts[i - 1], `count fell: ${counts}`);
+  }
+  assert.ok(counts[0] < counts[counts.length - 1], 'the range is not flat');
 });
