@@ -66,3 +66,37 @@ export function nearestCellTransform(mask, w, h) {
   for (let i = 0; i < n; i++) dist[i] = Math.sqrt(d2[i]);
   return { label, sx, sy, dist };
 }
+
+// The narrowest channel between every pair of adjacent cells.
+//
+// A background pixel whose neighbour belongs to a DIFFERENT cell sits on the
+// watershed between them, and the channel width there is the sum of the two
+// pixels' distances to their own cells. Taking the minimum over the whole
+// watershed gives the narrowest passage, and the two site points give the
+// bridge its endpoints — boundary points, not centres, because a capsule
+// between centres produces bone shapes.
+export function measureChannels(mask, w, h) {
+  const { label, sx, sy, dist } = nearestCellTransform(mask, w, h);
+  const best = new Map();
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (mask[i] || !label[i]) continue;
+      // Right and down only: every unordered neighbour pair is still visited
+      // exactly once, at half the work.
+      for (const j of [x + 1 < w ? i + 1 : -1, y + 1 < h ? i + w : -1]) {
+        if (j < 0 || mask[j] || !label[j] || label[j] === label[i]) continue;
+        const gap = dist[i] + dist[j];
+        const a = Math.min(label[i], label[j]);
+        const b = Math.max(label[i], label[j]);
+        const k = `${a}:${b}`;
+        const cur = best.get(k);
+        if (cur && cur.gap <= gap) continue;
+        const [lo, hi] = label[i] < label[j] ? [i, j] : [j, i];
+        best.set(k, { a, b, gap, ax: sx[lo], ay: sy[lo], bx: sx[hi], by: sy[hi] });
+      }
+    }
+  }
+  return [...best.values()].sort((p, q) => p.gap - q.gap);
+}
