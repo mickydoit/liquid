@@ -36,12 +36,19 @@ function exportFieldOf(state) {
   return (state.join ?? 0) > 0 ? joinedField(state).sample : makeWaterField(state);
 }
 
-// The world rectangle the app exports, mirroring renderer.viewBounds() at
-// zoom 1 and no pan.
-function viewBounds(width, height) {
+// The world rectangle the app exports, mirroring renderer.viewBounds().
+//
+// `insetZoom` and `insetX` reproduce the chrome inset: with the panel on the
+// right the app calls setViewInset(panelWidth + 16, 0), which shrinks the zoom
+// and shifts the design left. The shader has always drawn with it; viewBounds()
+// used to ignore it, and that alone framed the SVG differently from the canvas.
+function viewBounds(width, height, insetZoom = 1, insetX = 0) {
   const aspect = width / height;
-  const k = 3.15;
-  return { x0: -0.5 * aspect * k, x1: 0.5 * aspect * k, y0: -0.5 * k, y1: 0.5 * k };
+  const k = 3.15 / insetZoom;
+  return {
+    x0: (-0.5 - insetX) * aspect * k, x1: (0.5 - insetX) * aspect * k,
+    y0: -0.5 * k, y1: 0.5 * k,
+  };
 }
 
 // ── rasterisers ─────────────────────────────────────────────────────────
@@ -175,14 +182,17 @@ mkdirSync(dir, { recursive: true });
 const MARGIN = 0.02;                       // fieldOutline's default
 const CASES = [];
 for (const [fmt, W, H] of [['portrait', 800, 1200], ['landscape', 1350, 900]]) {
-  for (const join of [0, 0.6]) CASES.push({ fmt, W, H, join });
+  for (const join of [0, 0.6]) CASES.push({ fmt, W, H, join, iz: 1, ix: 0 });
 }
+// The real on-screen condition: a ~326px panel on a 2000px stage.
+CASES.push({ fmt: 'inset', W: 1350, H: 900, join: 0.6, iz: 0.837, ix: -0.0815 });
+CASES.push({ fmt: 'insetzero', W: 1350, H: 900, join: 0, iz: 0.837, ix: -0.0815 });
 
 let failures = 0;
-for (const { fmt, W, H, join } of CASES) {
+for (const { fmt, W, H, join, iz, ix } of CASES) {
   const state = { ...BASE, join };
   const field = exportFieldOf(state);
-  const bounds = viewBounds(W, H);
+  const bounds = viewBounds(W, H, iz, ix);
 
   // The canvas is rasterised over the PAGE rectangle; the SVG is contoured over
   // the guard-banded rectangle and shifted back. Both therefore land in the same

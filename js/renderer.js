@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=0ba92281';
-import { stepGrow, isMeta } from './cymafield.js?v=0ba92281';
-import { metaSolve, META_MAX } from './metafield.js?v=0ba92281';
-import { joinedField, CANON_EXTENT } from './cymajoin.js?v=0ba92281';
-import { packSDF } from './sdftex.js?v=0ba92281';
+import { VERT, FRAG } from './shader.js?v=6b322555';
+import { stepGrow, isMeta } from './cymafield.js?v=6b322555';
+import { metaSolve, META_MAX } from './metafield.js?v=6b322555';
+import { joinedField, CANON_EXTENT } from './cymajoin.js?v=6b322555';
+import { packSDF } from './sdftex.js?v=6b322555';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -37,6 +37,24 @@ function compile(gl, type, src) {
     throw new Error('shader compile failed: ' + gl.getShaderInfoLog(sh));
   }
   return sh;
+}
+
+// The world rectangle a given view maps onto the frame.
+//
+// ONE definition, because the shader and the vector export must agree on it.
+// main() computes p = (vUv - 0.5 - uPan) * vec2(uAspect, 1) * 3.15 / uZoom with
+// vUv spanning [0,1], so the visible rectangle is exactly this at vUv 0 and 1.
+// Anything that builds a frame from zoom, pan and inset by hand is a second
+// definition waiting to drift from the first.
+export function visibleRect({ aspect, zoom, pan, inset, insetZoom, useInset = true }) {
+  const z = zoom * (useInset ? insetZoom : 1);
+  const px = pan[0] + (useInset ? inset[0] : 0);
+  const py = pan[1] + (useInset ? inset[1] : 0);
+  const k = 3.15 / z;
+  return {
+    x0: (-0.5 - px) * aspect * k, x1: (0.5 - px) * aspect * k,
+    y0: (-0.5 - py) * k,          y1: (0.5 - py) * k,
+  };
 }
 
 export class LiquidRenderer {
@@ -80,7 +98,8 @@ export class LiquidRenderer {
     this.pan = [0, 0];
     // Chrome inset, kept SEPARATE from the user's pan: the design is nudged
     // and shrunk to centre in the area the floating panel does not cover.
-    // Exports must not inherit it — see renderToCanvas.
+    // Exports DO inherit it, so that what is on screen is what is exported —
+    // see viewBounds().
     this.inset = [0, 0];
     this.insetZoom = 1;
     // Global scalar on material time: 1 while live, and the Motion control
@@ -195,9 +214,11 @@ export class LiquidRenderer {
     return true;
   }
 
-  // `useInset` is false for exports: the chrome offset exists to dodge the
-  // on-screen panel, and baking it into an exported image would leave the
-  // design sitting off-centre with dead space on one side.
+  // `useInset` is true everywhere now, including exports. The offset does leave
+  // the design off-centre with dead space where the panel was — but a design
+  // tool whose export does not match its preview is worse than one whose export
+  // needs recentring, and the user composes with zoom and pan against the
+  // preview they can see.
   // `hPx` is the target's pixel height. It is needed for uPxWorld, which has
   // to be measured against the surface actually being drawn — the canvas when
   // previewing, the framebuffer when exporting.
@@ -376,7 +397,11 @@ export class LiquidRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (this.state) {
-      this._uploadUniforms(gl, width / height, false, height);
+      // useInset TRUE, matching viewBounds() and therefore the vector export.
+      // PNG, SVG, PDF and the screen must all frame the same rectangle; a raster
+      // that centred itself while the vectors did not is the same class of bug,
+      // just quieter.
+      this._uploadUniforms(gl, width / height, true, height);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     const px = new Uint8Array(width * height * 4);
@@ -399,18 +424,24 @@ export class LiquidRenderer {
     return out;
   }
 
-  // The world rectangle currently visible. The vector export needs this or a
-  // zoomed/panned view would export a different framing from the one on
-  // screen — the raster and vector outputs have to agree.
-  viewBounds() {
-    // Deliberately excludes the chrome inset: the vector export is framed the
-    // way the exported raster is, not the way the panel-dodged screen is.
-    const aspect = this.canvas.width / this.canvas.height;
-    const k = 3.15 / this.zoom;
-    return {
-      x0: (-0.5 - this.pan[0]) * aspect * k, x1: (0.5 - this.pan[0]) * aspect * k,
-      y0: (-0.5 - this.pan[1]) * k,          y1: (0.5 - this.pan[1]) * k,
-    };
+  // The world rectangle currently visible.
+  //
+  // MIRRORS the shader's mapping exactly — main() computes
+  // p = (vUv - 0.5 - uPan) * vec2(uAspect, 1) * 3.15 / uZoom — INCLUDING the
+  // chrome inset, because uZoom is zoom * insetZoom and uPan is pan + inset.
+  //
+  // It used to exclude the inset, on the reasoning that a vector export should
+  // be framed like an exported raster rather than like the panel-dodged screen.
+  // That silently exported a different rectangle from the one on screen: with
+  // the panel on the right the inset is about 0.84x zoom plus a leftward shift,
+  // so the SVG showed less world, off-centre, and no amount of contour fixing
+  // could make the two agree. What you see is now what you export.
+  viewBounds(useInset = true) {
+    return visibleRect({
+      aspect: this.canvas.width / this.canvas.height,
+      zoom: this.zoom, pan: this.pan,
+      inset: this.inset, insetZoom: this.insetZoom, useInset,
+    });
   }
 
   setZoom(z) { this.zoom = Math.min(6, Math.max(0.35, z)); this._dirty = true; }
