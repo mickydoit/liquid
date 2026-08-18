@@ -11,6 +11,7 @@
     "join-ladder": "node tools/joinladder.mjs out/join",
     "parity": "node tools/parity.mjs out/parity",
     "roundness": "node tools/roundness.mjs out/roundness",
+    "fusion": "node tools/fusion.mjs out/fusion",
     "bust": "node tools/bust.mjs"
   }
 }
