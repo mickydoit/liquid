@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=17f9b6fa';
-import { stepGrow, isMeta } from './cymafield.js?v=17f9b6fa';
-import { metaSolve, META_MAX } from './metafield.js?v=17f9b6fa';
-import { joinedField, CANON_EXTENT } from './cymajoin.js?v=17f9b6fa';
-import { packSDF } from './sdftex.js?v=17f9b6fa';
+import { VERT, FRAG } from './shader.js?v=fe17cf9f';
+import { stepGrow, isMeta } from './cymafield.js?v=fe17cf9f';
+import { metaSolve, META_MAX } from './metafield.js?v=fe17cf9f';
+import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=fe17cf9f';
+import { packSDF } from './sdftex.js?v=fe17cf9f';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -111,6 +111,11 @@ export class LiquidRenderer {
     this._dirty = true;
     this._joinTex = null;
     this._joinKey = null;
+    this._joinWorker = undefined;   // undefined = not yet tried, null = unavailable
+    this._joinBusy = false;
+    this._joinWant = null;
+    this._joinSeq = 0;
+    this.joinPending = false;
     this.joinBakeMs = 0;
 
     this.style = {
@@ -175,11 +180,16 @@ export class LiquidRenderer {
   // Upload the joined bake, if this design needs one and does not already have
   // it. Returns true when the shader should read the texture.
   //
-  // ONLY on a settled design. Segmenting and EDT-ing a 1024^2 raster takes
-  // ~200ms in node and cannot run per frame, so while audio is driving the
-  // geometry ('live-active') the analytic path is shown and Join appears the
-  // moment the design settles. The bake is keyed to a CANONICAL window, never to
-  // the canvas, so resizing the window cannot change which cells connect.
+  // ONLY on a settled design: a ~300-450ms segmentation cannot run per frame, so
+  // while audio is driving the geometry the analytic path is shown and the bake
+  // appears the moment the design settles. Keyed to a CANONICAL window, never to
+  // the canvas, so resizing cannot change which cells connect.
+  //
+  // ASYNCHRONOUS, and the previous bake stays on screen while a new one runs.
+  // The sliders fire 'input' continuously while dragged, so an inline bake would
+  // queue one per event and lock the tab. Only one bake is ever in flight; if the
+  // controls moved while it ran, the next one starts when it lands, which
+  // coalesces a drag into a handful of bakes rather than hundreds.
   _ensureJoin() {
     const s = this.state;
     if (!s || isMeta(s)) return false;
@@ -189,12 +199,81 @@ export class LiquidRenderer {
     const key = JOIN_KEYS.map((k) => s[k] ?? 0).join(',');
     if (this._joinKey === key) return true;
 
-    const gl = this.gl;
-    const t0 = performance.now();
-    const { grid, w, h } = joinedField(s);
-    const px = packSDF(grid, w, h);
-    const ms = performance.now() - t0;
+    this._joinWant = { key, state: { ...s } };
+    this._pumpJoin();
+    // Keep showing whatever is already uploaded. If nothing is, the analytic
+    // path draws — which is the un-joined design, not a blank canvas.
+    return this._joinTex !== null;
+  }
 
+  _pumpJoin() {
+    if (this._joinBusy || !this._joinWant) return;
+    const { key, state } = this._joinWant;
+    this._joinWant = null;
+    this._joinBusy = true;
+    this.joinPending = true;
+
+    const done = ({ grid, w, h, necks, ms }) => {
+      this._joinBusy = false;
+      this.joinPending = false;
+      this._uploadJoin(grid, w, h);
+      this._joinKey = key;
+      this.joinBakeMs = ms;
+      // The vector export reads this exact array rather than baking again.
+      primeJoinCache(state, 1024, { grid, w, h });
+      // Logged rather than swallowed: this is the number that decides whether
+      // the bake is fast enough, and it can only be answered here.
+      console.info(`[liquid] bake ${ms.toFixed(0)}ms  ${w}x${h}  necks ${necks}  `
+        + `join ${(state.join ?? 0).toFixed(2)} roundness ${(state.roundness ?? 0).toFixed(2)}`);
+      this._dirty = true;
+      this._pumpJoin();
+    };
+
+    const fail = (why) => {
+      this._joinBusy = false;
+      this.joinPending = false;
+      console.warn('[liquid] worker bake failed, falling back to inline:', why);
+      this._joinWorker = null;
+      const t0 = performance.now();
+      const r = joinedField(state);
+      done({ grid: r.grid, w: r.w, h: r.h, necks: r.necks.length, ms: performance.now() - t0 });
+    };
+
+    if (this._joinWorker === undefined) {
+      try {
+        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=fe17cf9f', import.meta.url),
+          { type: 'module' });
+      } catch (err) {
+        this._joinWorker = null;
+        console.warn('[liquid] no module worker available:', err && err.message);
+      }
+    }
+
+    if (!this._joinWorker) {
+      // No worker: bake inline. Still async to the extent that the frame in
+      // progress finishes first, so the old design is painted before the stall.
+      setTimeout(() => {
+        const t0 = performance.now();
+        const r = joinedField(state);
+        done({ grid: r.grid, w: r.w, h: r.h, necks: r.necks.length, ms: performance.now() - t0 });
+      }, 0);
+      return;
+    }
+
+    const id = ++this._joinSeq;
+    const onMessage = (e) => {
+      if (e.data.id !== id) return;
+      this._joinWorker.removeEventListener('message', onMessage);
+      if (e.data.error) fail(e.data.error);
+      else done(e.data);
+    };
+    this._joinWorker.addEventListener('message', onMessage);
+    this._joinWorker.postMessage({ id, state, res: 1024 });
+  }
+
+  _uploadJoin(grid, w, h) {
+    const gl = this.gl;
+    const px = packSDF(grid, w, h);
     if (!this._joinTex) this._joinTex = gl.createTexture();
     gl.activeTexture(gl.TEXTURE1);
     gl.bindTexture(gl.TEXTURE_2D, this._joinTex);
@@ -205,14 +284,6 @@ export class LiquidRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-
-    this._joinKey = key;
-    this.joinBakeMs = ms;
-    // Logged rather than swallowed: this figure is the open question about
-    // whether the bake needs a worker, and it can only be answered on the main
-    // thread in a real browser.
-    console.info(`[liquid] Join bake ${ms.toFixed(0)}ms  ${w}x${h}`);
-    return true;
   }
 
   // `useInset` is true everywhere now, including exports. The offset does leave

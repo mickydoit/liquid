@@ -14,7 +14,7 @@
 // ⚠ Mirrored in density.js's CYMA_FRAG. If the two drift apart, the vector
 // export stops matching what is on screen. Change them together.
 
-import { metaThickness } from './metafield.js?v=17f9b6fa';
+import { metaThickness } from './metafield.js?v=fe17cf9f';
 
 const PI = Math.PI;
 

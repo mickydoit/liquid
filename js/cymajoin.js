@@ -8,9 +8,9 @@
 // is a whole-image job and bakes rather than evaluating per pixel per frame.
 import {
   labelComponents, signedEdt, gridSampler, FORMATS,
-} from './bake.js?v=17f9b6fa';
-import { unionRound } from './blobfield.js?v=17f9b6fa';
-import { makeWaterField } from './cymafield.js?v=17f9b6fa';
+} from './bake.js?v=fe17cf9f';
+import { unionRound } from './blobfield.js?v=fe17cf9f';
+import { makeWaterField } from './cymafield.js?v=fe17cf9f';
 
 // Nearest foreground cell for every pixel, by two-pass vector propagation
 // (Danielsson). Exact on convex arrangements and within a fraction of a cell
@@ -609,3 +609,35 @@ export function joinedField(state, { res = 1024 } = {}) {
 }
 
 export function clearJoinCache() { cache = null; }
+
+// The cache key for a state, so a caller that bakes elsewhere — the worker —
+// can store its result under the same key the synchronous path would use.
+// One sampler per grid, built once. gridSampler's window is x,y in [-1,1] for a
+// square bake, so world points are normalised into it; the VALUES it returns are
+// true world distances because cellSize already carries the extent.
+function samplerFor(grid, w, h) {
+  const g = gridSampler(grid, w, h, 1);
+  return (x, y) => g(x / CANON_EXTENT, y / CANON_EXTENT);
+}
+
+export function joinCacheKey(state, res = 1024) {
+  return `${FIELD_KEYS.map((k) => state[k] ?? 0).join(',')}|${res}`;
+}
+
+// Store a grid baked off-thread, so the vector export reuses the EXACT array
+// the screen is showing rather than recomputing it. Same computation either
+// way, but this makes the parity structural instead of merely deterministic —
+// and saves the export a second bake.
+export function primeJoinCache(state, res, { grid, w, h, necks = [] }) {
+  cache = {
+    key: joinCacheKey(state, res),
+    value: {
+      sample: samplerFor(grid, w, h),
+      grid, w, h, aspect: 1, extent: CANON_EXTENT,
+      cellSize: (2 * CANON_EXTENT) / h,
+      necks, pairs: [], unselected: [], filletCap: Infinity,
+      shapes: null, roundness: state.roundness ?? 0,
+    },
+  };
+  return cache.value;
+}
