@@ -8,9 +8,9 @@
 // is a whole-image job and bakes rather than evaluating per pixel per frame.
 import {
   labelComponents, signedEdt, gridSampler, FORMATS,
-} from './bake.js?v=fe17cf9f';
-import { unionRound } from './blobfield.js?v=fe17cf9f';
-import { makeWaterField } from './cymafield.js?v=fe17cf9f';
+} from './bake.js?v=5b2f92d8';
+import { unionRound } from './blobfield.js?v=5b2f92d8';
+import { makeWaterField } from './cymafield.js?v=5b2f92d8';
 
 // Nearest foreground cell for every pixel, by two-pass vector propagation
 // (Danielsson). Exact on convex arrangements and within a fraction of a cell
@@ -323,11 +323,11 @@ export function buildJoinedField(
 
   // Identity. Returning the analytic field ITSELF rather than a bake of it is
   // what makes the default bit-identical to today rather than merely close.
-  if (join <= 0 && (state.roundness ?? 0) <= 0) {
+  if (join <= 0 && (state.roundness ?? 0) <= 0 && (state.fusion ?? 0) <= 0) {
     return {
       sample: analytic, grid: null, w, h, aspect, extent, cellSize,
       necks: [], pairs: [], unselected: [], filletCap: Infinity,
-      shapes: null, roundness: 0,
+      shapes: null, roundness: 0, fusion: 0, selected: [], inradii: new Map(),
     };
   }
 
@@ -375,8 +375,12 @@ export function buildJoinedField(
 
   const bodyLabels = roundness > 0
     ? labelComponents(bodyMask, w, h, 8).labels : labels;
-  const inradii = cellInradii(bodyMask, w, h,
-    roundness > 0 ? dist : edtCells, bodyLabels);
+  // cellInradii reads a signed EDT in CELLS, and every consumer multiplies its
+  // result by cellSize. Feeding it the world-unit `dist` scaled the radii by
+  // cellSize twice, collapsing every neck and blend radius to nearly zero — the
+  // necks came out as cusps where two bodies merely touch.
+  const bodyEdtCells = roundness > 0 ? signedEdt(bodyMask, w, h) : edtCells;
+  const inradii = cellInradii(bodyMask, w, h, bodyEdtCells, bodyLabels);
 
   const pairs = measureChannels(bodyMask, w, h);
   const viable = viablePairs(pairs, inradii);
@@ -387,11 +391,24 @@ export function buildJoinedField(
   const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
   const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
 
-  const necks = makeNecks(selected, toWorld, cellSize, inradii,
+  const fusion = state.fusion ?? 0;
+
+  // Fusion REPLACES the stub necks rather than adding to them: a stub is the
+  // bridge the fusion exists to eliminate.
+  const necks = fusion > 0 ? [] : makeNecks(selected, toWorld, cellSize, inradii,
     cellClearance(unselected));
 
   // Each neck carries its own cap, so no global one is applied.
   const filletCap = Infinity;
+
+  const toPix = (x, y) => [
+    ((x / (aspect * extent) + 1) / 2) * w - 0.5,
+    ((1 - y / extent) / 2) * h - 0.5,
+  ];
+  if (fusion > 0) {
+    dist = fuseCells(dist, bodyLabels, w, h, selected,
+      { fusion, cellSize, toWorld, toPix, inradii });
+  }
 
   // The grid: the base distance, with each neck filleted in over its own
   // bounding box only.
@@ -402,7 +419,7 @@ export function buildJoinedField(
   // ~700ms of a ~1s bake. A fillet union is identical to min() beyond kf of both
   // surfaces, so outside a neck's own reach there is nothing to compute.
   const grid = new Float64Array(total);
-  const analyticGeometry = roundness <= 0;
+  const analyticGeometry = roundness <= 0 && fusion <= 0;
   // Where nothing moved the cell, keep the ANALYTIC value: thresholding to a
   // binary mask and rebuilding distance from it quantises the zero level set to
   // a half-cell staircase at EVERY resolution — 0.225 cells RMS versus 0.002
@@ -411,9 +428,8 @@ export function buildJoinedField(
   // contour apart.
   for (let i = 0; i < total; i++) grid[i] = analyticGeometry ? raw[i] : dist[i];
 
-  // Pixel index from world, inverting toWorld.
-  const toPixX = (x) => ((x / (aspect * extent) + 1) / 2) * w - 0.5;
-  const toPixY = (y) => ((1 - y / extent) / 2) * h - 0.5;
+  const toPixX = (x) => toPix(x, 0)[0];
+  const toPixY = (y) => toPix(0, y)[1];
 
   for (const nk of necks) {
     const kf = Math.min(nk.kf, filletCap);
@@ -439,7 +455,7 @@ export function buildJoinedField(
   return {
     sample: sampler(grid),
     grid, w, h, aspect, extent, cellSize, necks, pairs, unselected, filletCap,
-    shapes, roundness,
+    shapes, roundness, fusion, selected, inradii,
   };
 }
 
@@ -574,6 +590,114 @@ export function roundCells(signed, mask, w, h, labels, shapes, clearance, {
   return out;
 }
 
+// ── Fusion ─────────────────────────────────────────────────────────────
+//
+// Join decides WHICH neighbours connect. Fusion decides how they connect.
+//
+// The old neck was a constant-radius segment stub fillet-unioned to the bodies.
+// That is a bridge: uniform width, symmetric pinch at both ends, and a connector
+// that stays visually distinct from the shapes it links — "beads on a string".
+//
+// This has no stub at all. Both bodies are GROWN locally toward one another and
+// smooth-unioned, so the neck is made of the bodies themselves: narrowest near
+// the middle, flaring into each cell, with no seam because there is no separate
+// part to seam against.
+
+// How far past the smaller body's radius the growth reaches, and therefore how
+// gradually the neck flares in.
+export const FUSION_REACH = 1.35;
+
+// Local growth at full Fusion, as a fraction of the smaller body's radius. The
+// half-gap term is what guarantees contact at any Fusion above 0.
+export const FUSION_GROW = 0.34;
+
+// Smooth-union radius, as a fraction of the smaller body's radius. This is what
+// carries curvature continuity through the junction; too small and the union
+// leaves a visible valley.
+export const FUSION_BLEND_MIN = 0.22;
+export const FUSION_BLEND_MAX = 0.95;
+
+// The signed distance to ONE cell, over a padded crop.
+//
+// Padded because an EDT cropped tight to a pair cannot see the background just
+// outside it and overestimates distance at the cell's extremes — the same bug
+// the nearest-cell transform was introduced to avoid globally.
+function cropDistance(labels, id, w, h, i0, j0, cw, ch, cellSize) {
+  const m = new Uint8Array(cw * ch);
+  for (let j = 0; j < ch; j++) {
+    const sj = j0 + j;
+    if (sj < 0 || sj >= h) continue;
+    for (let i = 0; i < cw; i++) {
+      const si = i0 + i;
+      if (si < 0 || si >= w) continue;
+      if (labels[sj * w + si] === id) m[j * cw + i] = 1;
+    }
+  }
+  const d = signedEdt(m, cw, ch);
+  const out = new Float64Array(cw * ch);
+  for (let k = 0; k < out.length; k++) out[k] = d[k] * cellSize;
+  return out;
+}
+
+// Fuse every selected pair into the distance field.
+export function fuseCells(dist, labels, w, h, selected, {
+  fusion = 0, cellSize = 1, toWorld, toPix, inradii,
+} = {}) {
+  if (fusion <= 0 || !selected.length) return dist;
+  const out = Float64Array.from(dist);
+
+  for (const p of selected) {
+    const rA = (inradii.get(p.a) ?? 0) * cellSize;
+    const rB = (inradii.get(p.b) ?? 0) * cellSize;
+    const rmin = Math.min(rA, rB);
+    if (rmin <= 0) continue;
+    const gap = p.gap * cellSize;
+
+    const [ax, ay] = toWorld(p.ax, p.ay);
+    const [bx, by] = toWorld(p.bx, p.by);
+    const mx = (ax + bx) / 2, my = (ay + by) / 2;
+
+    // Growth reaches this far from the channel midpoint, and the crop must hold
+    // enough of BOTH bodies for their distances to mean anything.
+    const reach = FUSION_REACH * rmin + gap;
+    const half = reach + Math.max(rA, rB) * 1.2;
+    const [pxA, pyA] = toPix(mx - half, my + half);
+    const [pxB, pyB] = toPix(mx + half, my - half);
+    const i0 = Math.floor(Math.min(pxA, pxB)), i1 = Math.ceil(Math.max(pxA, pxB));
+    const j0 = Math.floor(Math.min(pyA, pyB)), j1 = Math.ceil(Math.max(pyA, pyB));
+    const cw = i1 - i0 + 1, ch = j1 - j0 + 1;
+    if (cw < 3 || ch < 3 || cw * ch > 4e6) continue;
+
+    const dA = cropDistance(labels, p.a, w, h, i0, j0, cw, ch, cellSize);
+    const dB = cropDistance(labels, p.b, w, h, i0, j0, cw, ch, cellSize);
+
+    // Enough growth to close the channel, plus a Fusion-scaled share of the
+    // smaller body — which is what broadens the waist rather than just touching.
+    const grow = 0.5 * gap + fusion * FUSION_GROW * rmin;
+    const blend = (FUSION_BLEND_MIN + (FUSION_BLEND_MAX - FUSION_BLEND_MIN) * fusion) * rmin;
+
+    for (let j = 0; j < ch; j++) {
+      const sj = j0 + j;
+      if (sj < 0 || sj >= h) continue;
+      for (let i = 0; i < cw; i++) {
+        const si = i0 + i;
+        if (si < 0 || si >= w) continue;
+        const [x, y] = toWorld(si, sj);
+        // Growth is LOCAL: a smooth bump on the channel, zero at its edge, so
+        // the rest of both bodies keeps its own mass and contour.
+        const t = 1 - Math.hypot(x - mx, y - my) / reach;
+        if (t <= 0) continue;
+        const fall = t * t * (3 - 2 * t);
+        const g = grow * fall;
+        const fused = unionRound(dA[j * cw + i] - g, dB[j * cw + i] - g, blend);
+        const k = sj * w + si;
+        if (fused < out[k]) out[k] = fused;
+      }
+    }
+  }
+  return out;
+}
+
 // The bake window every consumer shares.
 //
 // FIXED, not derived from the output frame. The bake's cell size is
@@ -590,7 +714,8 @@ export const CANON_EXTENT = 1.40;
 // without invalidating the cache, so this list must stay complete.
 const FIELD_KEYS = [
   'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
-  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'variation',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'fusion',
+  'variation',
 ];
 
 let cache = null;

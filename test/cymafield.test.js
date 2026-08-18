@@ -194,3 +194,7 @@ test('Join defaults to off, so every existing design is unchanged', () => {
 test('Cell roundness defaults to off', () => {
   assert.equal(idleState().roundness, 0);
 });
+
+test('Fusion defaults to off', () => {
+  assert.equal(idleState().fusion, 0);
+});

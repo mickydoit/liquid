@@ -1,7 +1,7 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=fe17cf9f';
-import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=fe17cf9f';
-import { META_FRAME } from './metafield.js?v=fe17cf9f';
-import { joinedField } from './cymajoin.js?v=fe17cf9f';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=5b2f92d8';
+import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=5b2f92d8';
+import { META_FRAME } from './metafield.js?v=5b2f92d8';
+import { joinedField } from './cymajoin.js?v=5b2f92d8';
 
 // The field the export contours.
 //
@@ -17,7 +17,8 @@ import { joinedField } from './cymajoin.js?v=fe17cf9f';
 // still has nodal ribbons, and its spine is still where the outline belongs.
 function exportField(state, variant) {
   if (variant === 'outline' && !isMeta(state)) return makeCentrelineField(state);
-  const baked = (state.join ?? 0) > 0 || (state.roundness ?? 0) > 0;
+  const baked = (state.join ?? 0) > 0 || (state.roundness ?? 0) > 0
+    || (state.fusion ?? 0) > 0;
   if (!isMeta(state) && baked) return joinedField(state).sample;
   return makeWaterField(state);
 }

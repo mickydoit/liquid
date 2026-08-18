@@ -8,7 +8,7 @@
 // The grid is transferred rather than copied: it is a Float64Array of about
 // 8MB at 1024^2, and structured-cloning that per bake would cost more than the
 // bake saved.
-import { buildJoinedField, CANON_EXTENT } from './cymajoin.js?v=fe17cf9f';
+import { buildJoinedField, CANON_EXTENT } from './cymajoin.js?v=5b2f92d8';
 
 self.onmessage = (e) => {
   const { id, state, res } = e.data;

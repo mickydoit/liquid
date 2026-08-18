@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=fe17cf9f';
-import { stepGrow, isMeta } from './cymafield.js?v=fe17cf9f';
-import { metaSolve, META_MAX } from './metafield.js?v=fe17cf9f';
-import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=fe17cf9f';
-import { packSDF } from './sdftex.js?v=fe17cf9f';
+import { VERT, FRAG } from './shader.js?v=5b2f92d8';
+import { stepGrow, isMeta } from './cymafield.js?v=5b2f92d8';
+import { metaSolve, META_MAX } from './metafield.js?v=5b2f92d8';
+import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=5b2f92d8';
+import { packSDF } from './sdftex.js?v=5b2f92d8';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -14,7 +14,8 @@ import { packSDF } from './sdftex.js?v=fe17cf9f';
 // the uploaded texture; a change to anything else must not.
 const JOIN_KEYS = [
   'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
-  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'variation',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'fusion',
+  'variation',
 ];
 
 const UNIFORMS = [
@@ -193,7 +194,7 @@ export class LiquidRenderer {
   _ensureJoin() {
     const s = this.state;
     if (!s || isMeta(s)) return false;
-    if ((s.join ?? 0) <= 0 && (s.roundness ?? 0) <= 0) return false;
+    if ((s.join ?? 0) <= 0 && (s.roundness ?? 0) <= 0 && (s.fusion ?? 0) <= 0) return false;
     if (this.anim === 'live-active' || this.anim === 'idle') return false;
 
     const key = JOIN_KEYS.map((k) => s[k] ?? 0).join(',');
@@ -241,7 +242,7 @@ export class LiquidRenderer {
 
     if (this._joinWorker === undefined) {
       try {
-        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=fe17cf9f', import.meta.url),
+        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=5b2f92d8', import.meta.url),
           { type: 'module' });
       } catch (err) {
         this._joinWorker = null;
