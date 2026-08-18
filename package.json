@@ -10,6 +10,7 @@
     "refs": "node tools/render.mjs out 11 23 47",
     "join-ladder": "node tools/joinladder.mjs out/join",
     "parity": "node tools/parity.mjs out/parity",
+    "roundness": "node tools/roundness.mjs out/roundness",
     "bust": "node tools/bust.mjs"
   }
 }

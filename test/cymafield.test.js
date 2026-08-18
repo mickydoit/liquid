@@ -190,3 +190,7 @@ test('grow settles exactly at its target, and drains back when it returns to 0',
 test('Join defaults to off, so every existing design is unchanged', () => {
   assert.equal(idleState().join, 0);
 });
+
+test('Cell roundness defaults to off', () => {
+  assert.equal(idleState().roundness, 0);
+});

@@ -15,9 +15,9 @@
 // and every lobe is its own component. At Merge 1 the plan is fully realised.
 // Anchors, lobe sizes and the plan never change with Merge — only which groups
 // are active — so the layout stays stable while the connectivity moves.
-import { psi } from './cymafield.js?v=6b322555';
-import { makeRng } from './blobfield.js?v=6b322555';
-import { fnv1a } from './hash.js?v=6b322555';
+import { psi } from './cymafield.js?v=17f9b6fa';
+import { makeRng } from './blobfield.js?v=17f9b6fa';
+import { fnv1a } from './hash.js?v=17f9b6fa';
 
 export const META_MAX = 12;
 export const META_CLUSTER_MAX = 12;

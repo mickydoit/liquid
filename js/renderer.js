@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=6b322555';
-import { stepGrow, isMeta } from './cymafield.js?v=6b322555';
-import { metaSolve, META_MAX } from './metafield.js?v=6b322555';
-import { joinedField, CANON_EXTENT } from './cymajoin.js?v=6b322555';
-import { packSDF } from './sdftex.js?v=6b322555';
+import { VERT, FRAG } from './shader.js?v=17f9b6fa';
+import { stepGrow, isMeta } from './cymafield.js?v=17f9b6fa';
+import { metaSolve, META_MAX } from './metafield.js?v=17f9b6fa';
+import { joinedField, CANON_EXTENT } from './cymajoin.js?v=17f9b6fa';
+import { packSDF } from './sdftex.js?v=17f9b6fa';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -14,7 +14,7 @@ import { packSDF } from './sdftex.js?v=6b322555';
 // the uploaded texture; a change to anything else must not.
 const JOIN_KEYS = [
   'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
-  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'variation',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'variation',
 ];
 
 const UNIFORMS = [
@@ -182,7 +182,8 @@ export class LiquidRenderer {
   // the canvas, so resizing the window cannot change which cells connect.
   _ensureJoin() {
     const s = this.state;
-    if (!s || isMeta(s) || (s.join ?? 0) <= 0) return false;
+    if (!s || isMeta(s)) return false;
+    if ((s.join ?? 0) <= 0 && (s.roundness ?? 0) <= 0) return false;
     if (this.anim === 'live-active' || this.anim === 'idle') return false;
 
     const key = JOIN_KEYS.map((k) => s[k] ?? 0).join(',');

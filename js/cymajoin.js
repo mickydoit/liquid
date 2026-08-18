@@ -8,9 +8,9 @@
 // is a whole-image job and bakes rather than evaluating per pixel per frame.
 import {
   labelComponents, signedEdt, gridSampler, FORMATS,
-} from './bake.js?v=6b322555';
-import { unionRound } from './blobfield.js?v=6b322555';
-import { makeWaterField } from './cymafield.js?v=6b322555';
+} from './bake.js?v=17f9b6fa';
+import { unionRound } from './blobfield.js?v=17f9b6fa';
+import { makeWaterField } from './cymafield.js?v=17f9b6fa';
 
 // Nearest foreground cell for every pixel, by two-pass vector propagation
 // (Danielsson). Exact on convex arrangements and within a fraction of a cell
@@ -79,8 +79,10 @@ export function nearestCellTransform(mask, w, h) {
 // watershed gives the narrowest passage, and the two site points give the
 // bridge its endpoints — boundary points, not centres, because a capsule
 // between centres produces bone shapes.
-export function measureChannels(mask, w, h) {
-  const { label, sx, sy, dist } = nearestCellTransform(mask, w, h);
+// `nct` lets a caller that already has the transform hand it in. It is the most
+// expensive step here, and the bake needs it for Roundness as well.
+export function measureChannels(mask, w, h, nct = null) {
+  const { label, sx, sy, dist } = nct ?? nearestCellTransform(mask, w, h);
   const best = new Map();
 
   for (let y = 0; y < h; y++) {
@@ -319,12 +321,13 @@ export function buildJoinedField(
     return (x, y) => g(x / extent, y / extent);
   };
 
-  if (join <= 0) {
-    // Identity. Returning the analytic field ITSELF rather than a bake of it is
-    // what makes Join 0 bit-identical to today rather than merely close.
+  // Identity. Returning the analytic field ITSELF rather than a bake of it is
+  // what makes the default bit-identical to today rather than merely close.
+  if (join <= 0 && (state.roundness ?? 0) <= 0) {
     return {
       sample: analytic, grid: null, w, h, aspect, extent, cellSize,
       necks: [], pairs: [], unselected: [], filletCap: Infinity,
+      shapes: null, roundness: 0,
     };
   }
 
@@ -343,52 +346,232 @@ export function buildJoinedField(
   // The base for the fillet must be a true DISTANCE — see makeJoinedField.
   const edtCells = signedEdt(mask, w, h);
   const { labels } = labelComponents(mask, w, h, 8);
-  const inradii = cellInradii(mask, w, h, edtCells, labels);
+  const distRaw = new Float64Array(total);
+  for (let i = 0; i < total; i++) distRaw[i] = edtCells[i] * cellSize;
 
-  const pairs = measureChannels(mask, w, h);
+  // ── Roundness, BEFORE Join ────────────────────────────────────────────
+  //
+  // Measured on the ORIGINAL cells, so the clearance a rounded body is allowed
+  // to grow into is the channel the cymatic field actually left there.
+  const roundness = state.roundness ?? 0;
+  let dist = distRaw;
+  let bodyMask = mask;
+  let shapes = null;
+  if (roundness > 0) {
+    // ONE nearest-cell transform, shared by the clearance measurement and the
+    // territory partition the blend runs over. It is the most expensive step in
+    // the bake and computing it twice doubled the cost.
+    const nct0 = nearestCellTransform(mask, w, h);
+    shapes = cellShapes(mask, w, h, labels, toWorld, cellSize);
+    const clearance0 = cellClearance(measureChannels(mask, w, h, nct0));
+    const inradii0 = cellInradii(mask, w, h, edtCells, labels);
+    dist = roundCells(distRaw, mask, w, h, labels, shapes, clearance0,
+      { roundness, cellSize, toWorld, nct: nct0, inradii: inradii0 });
+    // Channels are re-measured against the ROUNDED bodies, so Join necks meet
+    // the shapes that are actually drawn rather than the ones they replaced.
+    bodyMask = new Uint8Array(total);
+    for (let i = 0; i < total; i++) bodyMask[i] = dist[i] < 0 ? 1 : 0;
+  }
+
+  const bodyLabels = roundness > 0
+    ? labelComponents(bodyMask, w, h, 8).labels : labels;
+  const inradii = cellInradii(bodyMask, w, h,
+    roundness > 0 ? dist : edtCells, bodyLabels);
+
+  const pairs = measureChannels(bodyMask, w, h);
   const viable = viablePairs(pairs, inradii);
   const selected = selectJoins(viable, join);
 
-  // Clearances are measured against every channel that is NOT closing — which
-  // includes the pairs rejected as too small to join. They are still open
-  // channels, and a fillet that swallowed one would put back exactly the
-  // thread-like connection the rejection was meant to avoid.
+  // A channel Join selected is MEANT to close, so it is excluded from the
+  // clearances the fillets are capped against.
   const chosen = new Set(selected.map((p) => `${p.a}:${p.b}`));
   const unselected = pairs.filter((p) => !chosen.has(`${p.a}:${p.b}`));
 
   const necks = makeNecks(selected, toWorld, cellSize, inradii,
     cellClearance(unselected));
 
-  // Each neck now carries its own cap, so no global one is applied.
+  // Each neck carries its own cap, so no global one is applied.
   const filletCap = Infinity;
 
-  const dist = new Float64Array(total);
-  for (let i = 0; i < total; i++) dist[i] = edtCells[i] * cellSize;
-  const distSample = sampler(dist);
-  const joined = makeJoinedField(distSample, necks, filletCap);
-
-  // Where the necks changed nothing, keep the ANALYTIC value. Thresholding to a
-  // binary mask and rebuilding distance from it quantises the zero level set to
-  // a half-cell staircase at EVERY resolution — 0.225 cells RMS versus 0.002 for
-  // this hybrid (bake.js:236-253). The two expressions differ in scale away from
-  // the boundary but agree in sign, and every zero crossing lies inside
-  // whichever region owns it.
+  // The grid: the base distance, with each neck filleted in over its own
+  // bounding box only.
+  //
+  // makeJoinedField() is the DEFINITION, and js/export.js still uses it for the
+  // analytic path — but evaluating it per pixel means every neck is tested
+  // against every pixel: 1.05M x 32 = 33M segment evaluations, measured at
+  // ~700ms of a ~1s bake. A fillet union is identical to min() beyond kf of both
+  // surfaces, so outside a neck's own reach there is nothing to compute.
   const grid = new Float64Array(total);
-  for (let j = 0; j < h; j++) {
-    for (let i = 0; i < w; i++) {
-      const k = j * w + i;
-      const [x, y] = toWorld(i, j);
-      const dj = joined(x, y);
-      // If no neck moved this cell, the joined distance still equals the EDT
-      // distance there, and the analytic value is the more precise of the two.
-      grid[k] = Math.abs(dj - dist[k]) < 1e-12 ? raw[k] : dj;
+  const analyticGeometry = roundness <= 0;
+  // Where nothing moved the cell, keep the ANALYTIC value: thresholding to a
+  // binary mask and rebuilding distance from it quantises the zero level set to
+  // a half-cell staircase at EVERY resolution — 0.225 cells RMS versus 0.002
+  // (bake.js:236-253). Above Roundness 0 the bodies are a blend toward ellipses,
+  // so `raw` describes a different shape and substituting it would tear the
+  // contour apart.
+  for (let i = 0; i < total; i++) grid[i] = analyticGeometry ? raw[i] : dist[i];
+
+  // Pixel index from world, inverting toWorld.
+  const toPixX = (x) => ((x / (aspect * extent) + 1) / 2) * w - 0.5;
+  const toPixY = (y) => ((1 - y / extent) / 2) * h - 0.5;
+
+  for (const nk of necks) {
+    const kf = Math.min(nk.kf, filletCap);
+    const reach = nk.r + kf;
+    const i0 = Math.max(0, Math.floor(toPixX(Math.min(nk.ax, nk.bx) - reach)));
+    const i1 = Math.min(w - 1, Math.ceil(toPixX(Math.max(nk.ax, nk.bx) + reach)));
+    const j0 = Math.max(0, Math.floor(toPixY(Math.max(nk.ay, nk.by) + reach)));
+    const j1 = Math.min(h - 1, Math.ceil(toPixY(Math.min(nk.ay, nk.by) - reach)));
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const k = j * w + i;
+        const [x, y] = toWorld(i, j);
+        const ds = sdSegment(x, y, nk.ax, nk.ay, nk.bx, nk.by) - nk.r;
+        // Seeded from `dist`, not from `grid`: successive necks must union
+        // against the true base distance, and `grid` may still hold the analytic
+        // value at this pixel.
+        const base = grid[k] === (analyticGeometry ? raw[k] : dist[k]) ? dist[k] : grid[k];
+        grid[k] = unionRound(base, ds, kf);
+      }
     }
   }
 
   return {
     sample: sampler(grid),
     grid, w, h, aspect, extent, cellSize, necks, pairs, unselected, filletCap,
+    shapes, roundness,
   };
+}
+
+// ── Cell Roundness ─────────────────────────────────────────────────────
+//
+// Relax each segmented cell toward its OWN area-matched ellipse. Nothing new is
+// scattered and no primitive is overlaid: the ellipse is derived from the cell's
+// image moments, so it inherits that cell's centroid, area and direction, and at
+// roundness 0 the field is returned untouched.
+//
+// Runs BEFORE Join, so the necks are measured and filleted against the rounded
+// bodies rather than the raw ones.
+
+// How far a rounded cell may grow outward, as a fraction of the tightest channel
+// it has. Two neighbours each growing by this leaves 1 - 2 * 0.4 = 20% of the
+// channel still open, so rounding can never close a nodal channel or push two
+// unrelated cells into contact.
+export const ROUND_GROW_FRAC = 0.4;
+
+// Approximate ellipse SDF. Exact for circles and close enough for the modest
+// ratios this produces; the exact form needs an iterative root solve. MIRRORS
+// sdEllipsef() in js/shader.js.
+export function sdEllipse(px, py, rx, ry, rot) {
+  const ca = Math.cos(-rot), sa = Math.sin(-rot);
+  const qx = px * ca - py * sa, qy = px * sa + py * ca;
+  const k1 = Math.hypot(qx / rx, qy / ry);
+  const k2 = Math.hypot(qx / (rx * rx), qy / (ry * ry));
+  if (k2 === 0) return -Math.min(rx, ry);
+  return ((k1 - 1) * k1) / k2;
+}
+
+// Centroid, area and principal axes of every cell, from image moments.
+//
+// Moments rather than a bounding box: a box has no orientation, so an elongated
+// cell lying diagonally would round toward a circle and lose the direction the
+// modal field gave it.
+export function cellShapes(mask, w, h, labels, toWorld, cellSize) {
+  const acc = new Map();
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const k = j * w + i;
+      if (!mask[k]) continue;
+      const id = labels[k];
+      if (!id) continue;
+      let a = acc.get(id);
+      if (!a) { a = { n: 0, sx: 0, sy: 0, sxx: 0, syy: 0, sxy: 0 }; acc.set(id, a); }
+      const [x, y] = toWorld(i, j);
+      a.n++; a.sx += x; a.sy += y; a.sxx += x * x; a.syy += y * y; a.sxy += x * y;
+    }
+  }
+
+  const out = new Map();
+  for (const [id, a] of acc) {
+    const cx = a.sx / a.n, cy = a.sy / a.n;
+    const mu20 = a.sxx / a.n - cx * cx;
+    const mu02 = a.syy / a.n - cy * cy;
+    const mu11 = a.sxy / a.n - cx * cy;
+    const half = (mu20 + mu02) / 2;
+    const disc = Math.sqrt(Math.max(0, ((mu20 - mu02) / 2) ** 2 + mu11 * mu11));
+    const l1 = Math.max(1e-12, half + disc), l2 = Math.max(1e-12, half - disc);
+    out.set(id, {
+      cx, cy,
+      area: a.n * cellSize * cellSize,
+      rot: 0.5 * Math.atan2(2 * mu11, mu20 - mu02),
+      ratio: Math.min(1, Math.sqrt(l2 / l1)),      // 1 = round, 0 = a line
+    });
+  }
+  return out;
+}
+
+// How circular a given cell should become at this Roundness.
+//
+// Compact cells round the hardest; elongated ones keep part of their direction,
+// because a modal field's long cells ARE the pattern and turning them into discs
+// erases the cymatic organisation the design is built on.
+// A near-degenerate cell has no usable direction, and an area-matched ellipse
+// for one is a sliver. Floor the ratio so rounding always produces a body.
+export const MIN_ELLIPSE_RATIO = 0.18;
+
+export function roundTarget(ratio, roundness) {
+  const r = Math.max(MIN_ELLIPSE_RATIO, ratio);
+  const strength = Math.min(1, roundness * (0.35 + 0.65 * r));
+  return { blend: strength, ratio: r + (1 - r) * strength };
+}
+
+// Blend every cell's signed distance toward its area-matched ellipse.
+//
+// `signed` and the result are in WORLD units, negative inside.
+export function roundCells(signed, mask, w, h, labels, shapes, clearance, {
+  roundness = 0, cellSize = 1, toWorld, nct = null, inradii = null,
+} = {}) {
+  if (roundness <= 0) return signed;
+  const out = Float64Array.from(signed);
+
+  // The specks at the modal centre are left exactly as they are — the same
+  // cells Join already declines to join, for the same reason: there is no body
+  // there to round, only a sliver, and rounding one produces a thread the
+  // contour cannot resolve. Measured at 6.1px of canvas/SVG divergence,
+  // entirely at the centre, before this skip existed.
+  const floor = inradii ? MIN_CELL_FRAC * medianInradius(inradii) : 0;
+
+  // Precompute each cell's target ellipse once rather than per pixel.
+  const ell = new Map();
+  for (const [id, sh] of shapes) {
+    if (floor > 0 && (inradii.get(id) ?? 0) < floor) continue;
+    const { blend, ratio } = roundTarget(sh.ratio, roundness);
+    // Area is preserved exactly: A = PI * a * b with b = a * ratio.
+    const rx = Math.sqrt(sh.area / (Math.PI * Math.max(1e-6, ratio)));
+    const grow = ROUND_GROW_FRAC * ((clearance.get(id) ?? Infinity) * cellSize);
+    ell.set(id, { ...sh, blend, rx, ry: rx * ratio, grow });
+  }
+
+  // The nearest-cell transform partitions the plane, so every pixel is blended
+  // against exactly ONE cell's ellipse — which is what keeps a rounded body
+  // inside its own territory and out of its neighbours'.
+  const { label } = nct ?? nearestCellTransform(mask, w, h);
+  for (let j = 0; j < h; j++) {
+    for (let i = 0; i < w; i++) {
+      const k = j * w + i;
+      const id = label[k];
+      if (!id) continue;
+      const e = ell.get(id);
+      if (!e || e.blend <= 0) continue;
+      const [x, y] = toWorld(i, j);
+      const de = sdEllipse(x - e.cx, y - e.cy, e.rx, e.ry, e.rot);
+      const blended = signed[k] * (1 - e.blend) + de * e.blend;
+      // Cap outward growth. Where the ellipse reaches past the cell this is what
+      // stops it crossing a nodal channel; inward relaxation is unconstrained.
+      out[k] = Number.isFinite(e.grow) ? Math.max(blended, signed[k] - e.grow) : blended;
+    }
+  }
+  return out;
 }
 
 // The bake window every consumer shares.
@@ -407,7 +590,7 @@ export const CANON_EXTENT = 1.40;
 // without invalidating the cache, so this list must stay complete.
 const FIELD_KEYS = [
   'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
-  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'variation',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'variation',
 ];
 
 let cache = null;

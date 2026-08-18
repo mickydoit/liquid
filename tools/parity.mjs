@@ -33,7 +33,8 @@ const BASE = {
 
 // EXACTLY what js/export.js does, so a divergence here is a divergence there.
 function exportFieldOf(state) {
-  return (state.join ?? 0) > 0 ? joinedField(state).sample : makeWaterField(state);
+  const baked = (state.join ?? 0) > 0 || (state.roundness ?? 0) > 0;
+  return baked ? joinedField(state).sample : makeWaterField(state);
 }
 
 // The world rectangle the app exports, mirroring renderer.viewBounds().
@@ -184,13 +185,16 @@ const CASES = [];
 for (const [fmt, W, H] of [['portrait', 800, 1200], ['landscape', 1350, 900]]) {
   for (const join of [0, 0.6]) CASES.push({ fmt, W, H, join, iz: 1, ix: 0 });
 }
+// Roundness changes the geometry, so it gets its own parity cases.
+CASES.push({ fmt: 'round', W: 1200, H: 1200, join: 0.6, iz: 1, ix: 0, roundness: 0.5 });
+CASES.push({ fmt: 'roundport', W: 800, H: 1200, join: 0.6, iz: 1, ix: 0, roundness: 0.75 });
 // The real on-screen condition: a ~326px panel on a 2000px stage.
 CASES.push({ fmt: 'inset', W: 1350, H: 900, join: 0.6, iz: 0.837, ix: -0.0815 });
 CASES.push({ fmt: 'insetzero', W: 1350, H: 900, join: 0, iz: 0.837, ix: -0.0815 });
 
 let failures = 0;
-for (const { fmt, W, H, join, iz, ix } of CASES) {
-  const state = { ...BASE, join };
+for (const { fmt, W, H, join, iz, ix, roundness = 0 } of CASES) {
+  const state = { ...BASE, join, roundness };
   const field = exportFieldOf(state);
   const bounds = viewBounds(W, H, iz, ix);
 
@@ -203,7 +207,7 @@ for (const { fmt, W, H, join, iz, ix } of CASES) {
   const svg = rasterRings(rings.map((r) => r.map(([x, y]) => [x - frame.dx, y - frame.dy])), W, H);
 
   const { n, worst, frac } = mismatchDepth(canvas, svg, W, H);
-  const tag = `${fmt}-join${join.toFixed(1)}`;
+  const tag = `${fmt}-join${join.toFixed(1)}${roundness ? `-rnd${roundness}` : ''}`;
   const head = `${tag}  rings ${rings.length}  mismatch ${(frac * 100).toFixed(2)}%  worst ${worst.toFixed(1)}px`;
   console.log(head);
   if (worst > 3) failures++;

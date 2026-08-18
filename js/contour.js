@@ -213,7 +213,7 @@ export function makeProjector(bounds, width, height, margin = 0.06) {
 // Outline of a scalar field (negative inside), in pixel space.
 export function fieldOutline(field, { bounds = { x0: -1.35, y0: -1.35, x1: 1.35, y1: 1.35 },
                                       width = 1600, height = 1200,
-                                      res = 1100, simplify = 0.6, margin = 0.02,
+                                      res = 1600, simplify = 0.3, margin = 0.02,
                                       sealBorder = true } = {}) {
   const { project, scale } = makeProjector(bounds, width, height, margin);
   const loops = marchingSquares(field, bounds, res, 0, sealBorder);
@@ -221,6 +221,12 @@ export function fieldOutline(field, { bounds = { x0: -1.35, y0: -1.35, x1: 1.35,
     bounds, scale, project,
     rings: loops
       .map((loop) => simplifyRing(loop.map(([x, y]) => project(x, y)), simplify))
+      // res 1600 / simplify 0.3, measured. At 1100/0.6 the modal singularity at
+      // the centre of a rounded design — where every nodal petal meets — left a
+      // 6px speck the contour could not resolve while the canvas painted it.
+      // 1600/0.3 brings every case to 2px; 2200/0.3 reaches 1.4px for twice the
+      // samples and more points per ring, which is not worth it.
+      //
       // A cymatic field throws off tiny specks at the resolution limit; they
       // add hundreds of paths to the SVG and are invisible at any print size.
       //

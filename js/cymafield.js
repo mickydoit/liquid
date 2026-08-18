@@ -14,7 +14,7 @@
 // ⚠ Mirrored in density.js's CYMA_FRAG. If the two drift apart, the vector
 // export stops matching what is on screen. Change them together.
 
-import { metaThickness } from './metafield.js?v=6b322555';
+import { metaThickness } from './metafield.js?v=17f9b6fa';
 
 const PI = Math.PI;
 
@@ -48,6 +48,10 @@ export function idleState() {
     // channels first. See js/cymajoin.js. Because it bakes, it appears on a
     // settled design rather than per frame while audio is driving.
     join: 0,
+    // Cell Roundness: relax each segmented cell toward its OWN area-matched
+    // ellipse — same centroid, same area, direction from its image moments.
+    // Runs BEFORE Join, so necks meet the rounded bodies. See js/cymajoin.js.
+    roundness: 0,
     // Pattern style. Two explicit generators, NOT a blend: they are different
     // geometry with different controls, and a slider between them produced
     // shapes belonging to neither.
