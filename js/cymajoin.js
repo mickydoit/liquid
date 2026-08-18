@@ -8,9 +8,9 @@
 // is a whole-image job and bakes rather than evaluating per pixel per frame.
 import {
   labelComponents, signedEdt, gridSampler, FORMATS,
-} from './bake.js?v=8209e2a8';
-import { unionRound } from './blobfield.js?v=8209e2a8';
-import { makeWaterField } from './cymafield.js?v=8209e2a8';
+} from './bake.js?v=0ba92281';
+import { unionRound } from './blobfield.js?v=0ba92281';
+import { makeWaterField } from './cymafield.js?v=0ba92281';
 
 // Nearest foreground cell for every pixel, by two-pass vector propagation
 // (Danielsson). Exact on convex arrangements and within a fraction of a cell

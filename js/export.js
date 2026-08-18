@@ -1,7 +1,7 @@
-import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=8209e2a8';
-import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=8209e2a8';
-import { META_FRAME } from './metafield.js?v=8209e2a8';
-import { joinedField } from './cymajoin.js?v=8209e2a8';
+import { fieldOutline, ringToPath, closedCatmullRom } from './contour.js?v=0ba92281';
+import { makeWaterField, makeCentrelineField, isMeta } from './cymafield.js?v=0ba92281';
+import { META_FRAME } from './metafield.js?v=0ba92281';
+import { joinedField } from './cymajoin.js?v=0ba92281';
 
 // The field the export contours.
 //
@@ -21,55 +21,70 @@ function exportField(state, variant) {
   return makeWaterField(state);
 }
 
-// How far past the page a metaball composition is contoured.
+// How far past the page every design is contoured.
 //
-// Its forms run off the frame, so contours reach the domain edge — and a
-// contour cut by the edge is an OPEN curve that ringToPath closes with a
-// straight chord, which an even-odd fill then inverts into a wedge across the
-// design. Contouring wider lets every loop close outside the page, where it is
-// simply cropped. The overhang stays in the file, which is what a printer
-// wants for bleed. Detailed Cymatic never hits this: its plate mask closes
-// every loop well inside the edge.
+// A contour reaching the edge of the sampled rectangle used to leave an OPEN
+// chain that ringToPath closed with a straight chord, which an even-odd fill
+// inverted into a wedge across the design. marchingSquares now seals its border
+// so every loop closes — but a closure ON the page edge is still visible as a
+// straight cut. Contouring wider puts that closure OUTSIDE the page, where the
+// viewBox crops it away, and the overhang stays in the file, which is what a
+// printer wants for bleed.
+//
+// Applied to EVERY mode now, not just Metaball Cymatic. A portrait view is only
+// 1.05 world units wide while a Detailed Cymatic figure reaches 1.105, so
+// portrait exports were cut too — measured at 25.7px of spurious geometry.
 const GUARD = 1.08;
 
-// The metaball composition's export frame, or null for Detailed Cymatic.
+// The world rectangle a Detailed Cymatic design is laid out against, when the
+// caller has no view rectangle to offer.
+const PLATE = 1.35;
+
+// The rectangle to contour, and how far to shift the result back.
 //
-// Shared by SVG and PDF: they contour identically and differ only in how they
-// write the result, so a frame fix applied to one and not the other shows up
+// One function for every mode and both writers. SVG and PDF differ only in how
+// they write the rings, so a frame fix applied to one and not the other shows up
 // as a PDF that does not match its SVG.
-function metaFrame(state, width, height) {
-  if (!isMeta(state)) return null;
+function contourFrame(state, width, height, bounds) {
   const aspect = width / height;
+  // Priority: the caller's view rectangle, else the composition's own frame.
   // fieldOutline otherwise defaults to a SQUARE +-1.35 fitted into the page,
   // which letterboxes a portrait export and crops the composition.
-  // The SAME rectangle the composition was laid out against — see META_FRAME.
-  // A different constant here silently rescales every exported design.
-  const fx = META_FRAME * aspect, fy = META_FRAME;
-  const sx = fx * GUARD, sy = fy * GUARD;
+  const base = bounds ?? (isMeta(state)
+    // The SAME rectangle the composition was laid out against — see META_FRAME.
+    // A different constant here silently rescales every exported design.
+    ? { x0: -META_FRAME * aspect, x1: META_FRAME * aspect, y0: -META_FRAME, y1: META_FRAME }
+    : { x0: -PLATE * aspect, x1: PLATE * aspect, y0: -PLATE, y1: PLATE });
+
+  // Expand about the centre, so the page's framing and scale are unchanged and
+  // the guard band lands outside it.
+  const cx = (base.x0 + base.x1) / 2, cy = (base.y0 + base.y1) / 2;
+  const hw = ((base.x1 - base.x0) / 2) * GUARD, hh = ((base.y1 - base.y0) / 2) * GUARD;
   return {
-    bounds: { x0: -sx, x1: sx, y0: -sy, y1: sy },
-    // Bounds and pixel size scale together, so the scale is unchanged and the
-    // guard band lands outside the page. This shifts it back.
+    // margin 0: the rectangle IS the frame, so fieldOutline must not inset it
+    // again — an inset would rescale the design relative to the page.
+    opts: {
+      bounds: { x0: cx - hw, x1: cx + hw, y0: cy - hh, y1: cy + hh },
+      width: width * GUARD, height: height * GUARD, margin: 0,
+    },
     dx: ((GUARD - 1) / 2) * width,
     dy: ((GUARD - 1) / 2) * height,
-    width: width * GUARD,
-    height: height * GUARD,
   };
 }
 
+// Exposed for tools/parity.mjs, which must frame its raster EXACTLY as the
+// exporter does or its comparison measures framing rather than fidelity.
+export function contourFrameForTest(state, width, height, bounds) {
+  return contourFrame(state, width, height, bounds);
+}
+
 export function buildSVG({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
-  // An explicit view rectangle still wins over the composition's own frame —
-  // the user's on-screen framing is the later decision.
-  const org = bounds ? null : metaFrame(state, width, height);
-  // `bounds` is the on-screen view rectangle. Passing it is what keeps a
-  // zoomed or panned SVG framed the same as the canvas; without it the vector
-  // output would silently ignore the user's framing. margin 0 because the
-  // view is already the exact frame.
-  const opts = org
-    ? { width: org.width, height: org.height, bounds: org.bounds, margin: 0 }
-    : bounds ? { width, height, bounds, margin: 0 } : { width, height };
+  // `bounds` is the on-screen view rectangle. Passing it is what keeps a zoomed
+  // or panned SVG framed the same as the canvas; without it the vector output
+  // would silently ignore the user's framing.
+  const frame = contourFrame(state, width, height, bounds);
   const field = exportField(state, variant);
-  const { rings } = fieldOutline(field, opts);
+  const { rings } = fieldOutline(field, frame.opts);
   const paths = rings.map((r, i) =>
     `    <path id="pool-${String(i + 1).padStart(3, '0')}" d="${ringToPath(r)}"/>`);
 
@@ -82,7 +97,7 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
 
   // Shift the guard band back off the page. The overhang stays in the file
   // rather than being clipped away, which is what a printer wants for bleed.
-  if (org) body = [`  <g transform="translate(${-org.dx} ${-org.dy})">`, ...body, '  </g>'];
+  body = [`  <g transform="translate(${-frame.dx} ${-frame.dy})">`, ...body, '  </g>'];
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -95,17 +110,14 @@ export function buildSVG({ state, width, height, ink, background, variant = 'fla
 
 export function exportPDF({ state, width, height, ink, background, variant = 'flat', bounds = null }) {
   const { jsPDF } = window.jspdf;
-  // Same frame treatment as buildSVG — see metaFrame(). Kept in step
-  // deliberately: a PDF framed differently from its SVG is the kind of bug
-  // that only shows up at the printer.
-  const org = bounds ? null : metaFrame(state, width, height);
-  const opts = org
-    ? { width: org.width, height: org.height, bounds: org.bounds, margin: 0 }
-    : bounds ? { width, height, bounds, margin: 0 } : { width, height };
+  // The SAME frame treatment as buildSVG — see contourFrame(). Kept in step
+  // deliberately: a PDF framed differently from its SVG is the kind of bug that
+  // only shows up at the printer.
+  const frame = contourFrame(state, width, height, bounds);
   const field = exportField(state, variant);
-  let { rings } = fieldOutline(field, opts);
+  let { rings } = fieldOutline(field, frame.opts);
   // Shift the guard band off the page before anything is measured in mm.
-  if (org) rings = rings.map((r) => r.map(([x, y]) => [x - org.dx, y - org.dy]));
+  rings = rings.map((r) => r.map(([x, y]) => [x - frame.dx, y - frame.dy]));
   const mmW = width > height ? 297 : 210;
   const mmH = mmW * (height / width);
   const doc = new jsPDF({

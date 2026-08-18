@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=8209e2a8';
-import { stepGrow, isMeta } from './cymafield.js?v=8209e2a8';
-import { metaSolve, META_MAX } from './metafield.js?v=8209e2a8';
-import { joinedField, CANON_EXTENT } from './cymajoin.js?v=8209e2a8';
-import { packSDF } from './sdftex.js?v=8209e2a8';
+import { VERT, FRAG } from './shader.js?v=0ba92281';
+import { stepGrow, isMeta } from './cymafield.js?v=0ba92281';
+import { metaSolve, META_MAX } from './metafield.js?v=0ba92281';
+import { joinedField, CANON_EXTENT } from './cymajoin.js?v=0ba92281';
+import { packSDF } from './sdftex.js?v=0ba92281';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //

@@ -6,13 +6,35 @@
 // rasterisation of one. That is what makes the SVG/PDF export the true shape.
 
 // Marching squares at iso = 0, returning closed loops of [x, y] points.
-export function marchingSquares(field, bounds, res = 320, iso = 0) {
+export function marchingSquares(field, bounds, res = 320, iso = 0, sealBorder = true) {
   const { x0, y0, x1, y1 } = bounds;
   const dx = (x1 - x0) / res, dy = (y1 - y0) / res;
   const n = res + 1;
   const v = new Float64Array(n * n);
   for (let j = 0; j < n; j++) {
     for (let i = 0; i < n; i++) v[j * n + i] = field(x0 + i * dx, y0 + j * dy) - iso;
+  }
+
+  // SEAL THE BORDER: force the outermost ring of samples to read as outside.
+  //
+  // A contour that reaches the edge of the sampled rectangle leaves stitchLoops
+  // with an OPEN chain, and ringToPath closes it with a straight chord — which
+  // an even-odd fill then inverts into a wedge slicing across the design. That
+  // is the single worst export failure this project has: measured at 25.7px of
+  // spurious geometry on a portrait frame, because a portrait view is only 1.05
+  // world units wide while the figure reaches 1.105.
+  //
+  // Sealing makes every loop close, and it closes along the frame — which is
+  // what clipping a shape to a page actually means. Callers put the seal OUTSIDE
+  // the page via a guard band, so the closure lands where it is cropped away.
+  if (sealBorder) {
+    const OUT = 1e3;
+    for (let i = 0; i < n; i++) {
+      v[i] = OUT;                        // bottom row
+      v[(n - 1) * n + i] = OUT;          // top row
+      v[i * n] = OUT;                    // left column
+      v[i * n + n - 1] = OUT;            // right column
+    }
   }
 
   const px = (i) => x0 + i * dx, py = (j) => y0 + j * dy;
@@ -132,15 +154,36 @@ function rdpOpen(pts, epsilon) {
 
 // Periodic Catmull-Rom. The open form in strands.js clamps its end tangents,
 // which leaves a visible corner exactly where a ring closes.
+// The largest a handle may be, as a fraction of its own segment's length.
+//
+// Catmull-Rom sets each handle from the NEIGHBOURS' separation, so where a ring
+// turns sharply — or where one simplified segment is far shorter than the span
+// either side of it — the handle can be several times the segment it belongs to
+// and the curve shoots past its own control points. That is what produces long
+// spikes and self-intersections out of an otherwise sane polygon. 1/3 is the
+// classic non-overshoot bound: at exactly 1/3 with collinear points the cubic
+// reduces to the straight line.
+const HANDLE_MAX = 1 / 3;
+
+function clampHandle(anchor, handle, segLen) {
+  const hx = handle[0] - anchor[0], hy = handle[1] - anchor[1];
+  const len = Math.hypot(hx, hy);
+  const lim = HANDLE_MAX * segLen;
+  if (len <= lim || len < 1e-12) return handle;
+  const k = lim / len;
+  return [anchor[0] + hx * k, anchor[1] + hy * k];
+}
+
 export function closedCatmullRom(pts) {
   const n = pts.length;
   const at = (i) => pts[((i % n) + n) % n];
   const segs = [];
   for (let i = 0; i < n; i++) {
     const p0 = at(i - 1), p1 = at(i), p2 = at(i + 1), p3 = at(i + 2);
+    const segLen = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
     segs.push({
-      c1: [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6],
-      c2: [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6],
+      c1: clampHandle(p1, [p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6], segLen),
+      c2: clampHandle(p2, [p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6], segLen),
       end: p2,
     });
   }
@@ -170,15 +213,22 @@ export function makeProjector(bounds, width, height, margin = 0.06) {
 // Outline of a scalar field (negative inside), in pixel space.
 export function fieldOutline(field, { bounds = { x0: -1.35, y0: -1.35, x1: 1.35, y1: 1.35 },
                                       width = 1600, height = 1200,
-                                      res = 760, simplify = 0.6, margin = 0.02 } = {}) {
+                                      res = 1100, simplify = 0.6, margin = 0.02,
+                                      sealBorder = true } = {}) {
   const { project, scale } = makeProjector(bounds, width, height, margin);
-  const loops = marchingSquares(field, bounds, res);
+  const loops = marchingSquares(field, bounds, res, 0, sealBorder);
   return {
     bounds, scale, project,
     rings: loops
       .map((loop) => simplifyRing(loop.map(([x, y]) => project(x, y)), simplify))
       // A cymatic field throws off tiny specks at the resolution limit; they
       // add hundreds of paths to the SVG and are invisible at any print size.
-      .filter((r) => r.length >= 6),
+      //
+      // 4, not 6. At 6 the smallest real cells — the starburst petals at the
+      // modal centre — were dropped from the SVG while the canvas still painted
+      // them, which measured as 6.7px of canvas-only ink. 4 is the geometric
+      // minimum for a closed area, and 3 measures identically, so nothing
+      // between them exists to lose.
+      .filter((r) => r.length >= 4),
   };
 }
