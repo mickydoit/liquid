@@ -1,8 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=5b2f92d8';
-import { stepGrow, isMeta } from './cymafield.js?v=5b2f92d8';
-import { metaSolve, META_MAX } from './metafield.js?v=5b2f92d8';
-import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=5b2f92d8';
-import { packSDF } from './sdftex.js?v=5b2f92d8';
+import { VERT, FRAG } from './shader.js?v=28921e7d';
+import { stepGrow, isMeta } from './cymafield.js?v=28921e7d';
+import { metaSolve, META_MAX } from './metafield.js?v=28921e7d';
+import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=28921e7d';
+import { packSDF } from './sdftex.js?v=28921e7d';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -242,7 +242,7 @@ export class LiquidRenderer {
 
     if (this._joinWorker === undefined) {
       try {
-        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=5b2f92d8', import.meta.url),
+        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=28921e7d', import.meta.url),
           { type: 'module' });
       } catch (err) {
         this._joinWorker = null;
