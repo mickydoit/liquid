@@ -8,6 +8,10 @@
     "test": "node --test test/*.test.js",
     "start": "python3 -m http.server 8788",
     "refs": "node tools/render.mjs out 11 23 47",
+    "join-ladder": "node tools/joinladder.mjs out/join",
+    "parity": "node tools/parity.mjs out/parity",
+    "roundness": "node tools/roundness.mjs out/roundness",
+    "fusion": "node tools/fusion.mjs out/fusion",
     "bust": "node tools/bust.mjs"
   }
 }

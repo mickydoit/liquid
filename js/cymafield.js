@@ -14,7 +14,7 @@
 // ⚠ Mirrored in density.js's CYMA_FRAG. If the two drift apart, the vector
 // export stops matching what is on screen. Change them together.
 
-import { metaThickness } from './metafield.js?v=87f2b33d';
+import { metaThickness } from './metafield.js?v=28921e7d';
 
 const PI = Math.PI;
 
@@ -43,6 +43,20 @@ export function idleState() {
     simple: 0,         // 0 = full nodal detail, 1 = a few broad meanders
     swell: 0,          // 0 = even line weight, 1 = broad lobes tapering to necks
     mass: 0,           // 0 = water on the NODES (a web), 1 = on the ANTINODES (islands)
+    // Join: 0 leaves the cells as islands, exactly as before. Above 0 the
+    // geometry BAKES and neighbouring cells grow filleted necks, tightest
+    // channels first. See js/cymajoin.js. Because it bakes, it appears on a
+    // settled design rather than per frame while audio is driving.
+    join: 0,
+    // Cell Roundness: relax each segmented cell toward its OWN area-matched
+    // ellipse — same centroid, same area, direction from its image moments.
+    // Runs BEFORE Join, so necks meet the rounded bodies. See js/cymajoin.js.
+    roundness: 0,
+    // Fusion: how naturally each SELECTED connection forms. Join picks which
+    // neighbours connect; Fusion grows both bodies locally toward one another
+    // and smooth-unions them, so the neck is made of the bodies themselves
+    // rather than a bridge laid between them. See js/cymajoin.js.
+    fusion: 0,
     // Pattern style. Two explicit generators, NOT a blend: they are different
     // geometry with different controls, and a slider between them produced
     // shapes belonging to neither.

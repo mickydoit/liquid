@@ -1,6 +1,8 @@
-import { VERT, FRAG } from './shader.js?v=87f2b33d';
-import { stepGrow, isMeta } from './cymafield.js?v=87f2b33d';
-import { metaSolve, META_MAX } from './metafield.js?v=87f2b33d';
+import { VERT, FRAG } from './shader.js?v=28921e7d';
+import { stepGrow, isMeta } from './cymafield.js?v=28921e7d';
+import { metaSolve, META_MAX } from './metafield.js?v=28921e7d';
+import { joinedField, CANON_EXTENT, joinCacheKey, primeJoinCache } from './cymajoin.js?v=28921e7d';
+import { packSDF } from './sdftex.js?v=28921e7d';
 
 // Minimal WebGL renderer: one fullscreen quad, one shader.
 //
@@ -8,12 +10,21 @@ import { metaSolve, META_MAX } from './metafield.js?v=87f2b33d';
 // program — there is no scene, no camera, no geometry to manage — so a scene
 // graph would be several hundred KB of dependency doing nothing.
 
+// Everything the joined bake depends on. A change to any of these invalidates
+// the uploaded texture; a change to anything else must not.
+const JOIN_KEYS = [
+  'm', 'n', 'kr', 'ma', 'mix', 'amp', 'fine', 'chaos',
+  'simple', 'swell', 'mass', 'phase', 'grow', 'join', 'roundness', 'fusion',
+  'variation',
+];
+
 const UNIFORMS = [
   'uM', 'uN', 'uKr', 'uMa', 'uMix', 'uAmp', 'uFine', 'uChaos', 'uPhase',
   'uTimeC', 'uRipAmt', 'uRipT', 'uMatTime', 'uGrow',
   'uSimple', 'uRim', 'uDepth', 'uRefract', 'uSwell',
   'uView', 'uLineW', 'uBackTex', 'uHasBack', 'uMass',
   'uMeta', 'uMetaRC', 'uMetaN', 'uMetaK', 'uMetaScale', 'uMode',
+  'uJoinTex', 'uJoinOn', 'uJoinExtent',
   'uAspect', 'uZoom', 'uPan', 'uGloss', 'uDispersion', 'uTransparent',
   'uGround', 'uInk', 'uDeep',
   'uPxWorld',
@@ -27,6 +38,24 @@ function compile(gl, type, src) {
     throw new Error('shader compile failed: ' + gl.getShaderInfoLog(sh));
   }
   return sh;
+}
+
+// The world rectangle a given view maps onto the frame.
+//
+// ONE definition, because the shader and the vector export must agree on it.
+// main() computes p = (vUv - 0.5 - uPan) * vec2(uAspect, 1) * 3.15 / uZoom with
+// vUv spanning [0,1], so the visible rectangle is exactly this at vUv 0 and 1.
+// Anything that builds a frame from zoom, pan and inset by hand is a second
+// definition waiting to drift from the first.
+export function visibleRect({ aspect, zoom, pan, inset, insetZoom, useInset = true }) {
+  const z = zoom * (useInset ? insetZoom : 1);
+  const px = pan[0] + (useInset ? inset[0] : 0);
+  const py = pan[1] + (useInset ? inset[1] : 0);
+  const k = 3.15 / z;
+  return {
+    x0: (-0.5 - px) * aspect * k, x1: (0.5 - px) * aspect * k,
+    y0: (-0.5 - py) * k,          y1: (0.5 - py) * k,
+  };
 }
 
 export class LiquidRenderer {
@@ -70,7 +99,8 @@ export class LiquidRenderer {
     this.pan = [0, 0];
     // Chrome inset, kept SEPARATE from the user's pan: the design is nudged
     // and shrunk to centre in the area the floating panel does not cover.
-    // Exports must not inherit it — see renderToCanvas.
+    // Exports DO inherit it, so that what is on screen is what is exported —
+    // see viewBounds().
     this.inset = [0, 0];
     this.insetZoom = 1;
     // Global scalar on material time: 1 while live, and the Motion control
@@ -80,6 +110,14 @@ export class LiquidRenderer {
     this._tick = 0;
     this._frameSink = null;
     this._dirty = true;
+    this._joinTex = null;
+    this._joinKey = null;
+    this._joinWorker = undefined;   // undefined = not yet tried, null = unavailable
+    this._joinBusy = false;
+    this._joinWant = null;
+    this._joinSeq = 0;
+    this.joinPending = false;
+    this.joinBakeMs = 0;
 
     this.style = {
       gloss: 1, dispersion: 1, rim: 1, depth: 1, refract: 1,
@@ -140,9 +178,120 @@ export class LiquidRenderer {
   }
   setFrameSink(fn) { this._frameSink = fn; }
 
-  // `useInset` is false for exports: the chrome offset exists to dodge the
-  // on-screen panel, and baking it into an exported image would leave the
-  // design sitting off-centre with dead space on one side.
+  // Upload the joined bake, if this design needs one and does not already have
+  // it. Returns true when the shader should read the texture.
+  //
+  // ONLY on a settled design: a ~300-450ms segmentation cannot run per frame, so
+  // while audio is driving the geometry the analytic path is shown and the bake
+  // appears the moment the design settles. Keyed to a CANONICAL window, never to
+  // the canvas, so resizing cannot change which cells connect.
+  //
+  // ASYNCHRONOUS, and the previous bake stays on screen while a new one runs.
+  // The sliders fire 'input' continuously while dragged, so an inline bake would
+  // queue one per event and lock the tab. Only one bake is ever in flight; if the
+  // controls moved while it ran, the next one starts when it lands, which
+  // coalesces a drag into a handful of bakes rather than hundreds.
+  _ensureJoin() {
+    const s = this.state;
+    if (!s || isMeta(s)) return false;
+    if ((s.join ?? 0) <= 0 && (s.roundness ?? 0) <= 0 && (s.fusion ?? 0) <= 0) return false;
+    if (this.anim === 'live-active' || this.anim === 'idle') return false;
+
+    const key = JOIN_KEYS.map((k) => s[k] ?? 0).join(',');
+    if (this._joinKey === key) return true;
+
+    this._joinWant = { key, state: { ...s } };
+    this._pumpJoin();
+    // Keep showing whatever is already uploaded. If nothing is, the analytic
+    // path draws — which is the un-joined design, not a blank canvas.
+    return this._joinTex !== null;
+  }
+
+  _pumpJoin() {
+    if (this._joinBusy || !this._joinWant) return;
+    const { key, state } = this._joinWant;
+    this._joinWant = null;
+    this._joinBusy = true;
+    this.joinPending = true;
+
+    const done = ({ grid, w, h, necks, ms }) => {
+      this._joinBusy = false;
+      this.joinPending = false;
+      this._uploadJoin(grid, w, h);
+      this._joinKey = key;
+      this.joinBakeMs = ms;
+      // The vector export reads this exact array rather than baking again.
+      primeJoinCache(state, 1024, { grid, w, h });
+      // Logged rather than swallowed: this is the number that decides whether
+      // the bake is fast enough, and it can only be answered here.
+      console.info(`[liquid] bake ${ms.toFixed(0)}ms  ${w}x${h}  necks ${necks}  `
+        + `join ${(state.join ?? 0).toFixed(2)} roundness ${(state.roundness ?? 0).toFixed(2)}`);
+      this._dirty = true;
+      this._pumpJoin();
+    };
+
+    const fail = (why) => {
+      this._joinBusy = false;
+      this.joinPending = false;
+      console.warn('[liquid] worker bake failed, falling back to inline:', why);
+      this._joinWorker = null;
+      const t0 = performance.now();
+      const r = joinedField(state);
+      done({ grid: r.grid, w: r.w, h: r.h, necks: r.necks.length, ms: performance.now() - t0 });
+    };
+
+    if (this._joinWorker === undefined) {
+      try {
+        this._joinWorker = new Worker(new URL('./cymajoin.worker.js?v=28921e7d', import.meta.url),
+          { type: 'module' });
+      } catch (err) {
+        this._joinWorker = null;
+        console.warn('[liquid] no module worker available:', err && err.message);
+      }
+    }
+
+    if (!this._joinWorker) {
+      // No worker: bake inline. Still async to the extent that the frame in
+      // progress finishes first, so the old design is painted before the stall.
+      setTimeout(() => {
+        const t0 = performance.now();
+        const r = joinedField(state);
+        done({ grid: r.grid, w: r.w, h: r.h, necks: r.necks.length, ms: performance.now() - t0 });
+      }, 0);
+      return;
+    }
+
+    const id = ++this._joinSeq;
+    const onMessage = (e) => {
+      if (e.data.id !== id) return;
+      this._joinWorker.removeEventListener('message', onMessage);
+      if (e.data.error) fail(e.data.error);
+      else done(e.data);
+    };
+    this._joinWorker.addEventListener('message', onMessage);
+    this._joinWorker.postMessage({ id, state, res: 1024 });
+  }
+
+  _uploadJoin(grid, w, h) {
+    const gl = this.gl;
+    const px = packSDF(grid, w, h);
+    if (!this._joinTex) this._joinTex = gl.createTexture();
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this._joinTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, px);
+    // NPOT-safe, and CLAMP_TO_EDGE so a sample past the window cannot wrap the
+    // far side of the design into view.
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  }
+
+  // `useInset` is true everywhere now, including exports. The offset does leave
+  // the design off-centre with dead space where the panel was — but a design
+  // tool whose export does not match its preview is worse than one whose export
+  // needs recentring, and the user composes with zoom and pan against the
+  // preview they can see.
   // `hPx` is the target's pixel height. It is needed for uPxWorld, which has
   // to be measured against the surface actually being drawn — the canvas when
   // previewing, the framebuffer when exporting.
@@ -171,6 +320,15 @@ export class LiquidRenderer {
     s.aspect = aspect;
     const meta = isMeta(s);
     gl.uniform1f(u.uMode, meta ? 1 : 0);
+
+    const joinOn = this._ensureJoin();
+    gl.uniform1f(u.uJoinOn, joinOn ? 1 : 0);
+    gl.uniform1f(u.uJoinExtent, CANON_EXTENT);
+    if (joinOn) {
+      gl.activeTexture(gl.TEXTURE1);
+      gl.bindTexture(gl.TEXTURE_2D, this._joinTex);
+      gl.uniform1i(u.uJoinTex, 1);
+    }
     if (meta) {
       const { balls, blendR, scale } = metaSolve(s);
       const xy = this._metaArr || (this._metaArr = new Float32Array(META_MAX * 4));
@@ -312,7 +470,11 @@ export class LiquidRenderer {
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
     if (this.state) {
-      this._uploadUniforms(gl, width / height, false, height);
+      // useInset TRUE, matching viewBounds() and therefore the vector export.
+      // PNG, SVG, PDF and the screen must all frame the same rectangle; a raster
+      // that centred itself while the vectors did not is the same class of bug,
+      // just quieter.
+      this._uploadUniforms(gl, width / height, true, height);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     const px = new Uint8Array(width * height * 4);
@@ -335,18 +497,24 @@ export class LiquidRenderer {
     return out;
   }
 
-  // The world rectangle currently visible. The vector export needs this or a
-  // zoomed/panned view would export a different framing from the one on
-  // screen — the raster and vector outputs have to agree.
-  viewBounds() {
-    // Deliberately excludes the chrome inset: the vector export is framed the
-    // way the exported raster is, not the way the panel-dodged screen is.
-    const aspect = this.canvas.width / this.canvas.height;
-    const k = 3.15 / this.zoom;
-    return {
-      x0: (-0.5 - this.pan[0]) * aspect * k, x1: (0.5 - this.pan[0]) * aspect * k,
-      y0: (-0.5 - this.pan[1]) * k,          y1: (0.5 - this.pan[1]) * k,
-    };
+  // The world rectangle currently visible.
+  //
+  // MIRRORS the shader's mapping exactly — main() computes
+  // p = (vUv - 0.5 - uPan) * vec2(uAspect, 1) * 3.15 / uZoom — INCLUDING the
+  // chrome inset, because uZoom is zoom * insetZoom and uPan is pan + inset.
+  //
+  // It used to exclude the inset, on the reasoning that a vector export should
+  // be framed like an exported raster rather than like the panel-dodged screen.
+  // That silently exported a different rectangle from the one on screen: with
+  // the panel on the right the inset is about 0.84x zoom plus a leftward shift,
+  // so the SVG showed less world, off-centre, and no amount of contour fixing
+  // could make the two agree. What you see is now what you export.
+  viewBounds(useInset = true) {
+    return visibleRect({
+      aspect: this.canvas.width / this.canvas.height,
+      zoom: this.zoom, pan: this.pan,
+      inset: this.inset, insetZoom: this.insetZoom, useInset,
+    });
   }
 
   setZoom(z) { this.zoom = Math.min(6, Math.max(0.35, z)); this._dirty = true; }

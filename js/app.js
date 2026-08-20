@@ -1,11 +1,11 @@
-import { AudioEngine } from './audio.js?v=87f2b33d';
-import { buildFingerprint } from './features.js?v=87f2b33d';
-import { LiquidRenderer } from './renderer.js?v=87f2b33d';
-import { LiveConductor } from './live.js?v=87f2b33d';
-import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=87f2b33d';
-import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=87f2b33d';
-import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=87f2b33d';
-import { defaultMeta } from './metafield.js?v=87f2b33d';
+import { AudioEngine } from './audio.js?v=28921e7d';
+import { buildFingerprint } from './features.js?v=28921e7d';
+import { LiquidRenderer } from './renderer.js?v=28921e7d';
+import { LiveConductor } from './live.js?v=28921e7d';
+import { idleState, targetFromFeatures, clamp01 } from './cymafield.js?v=28921e7d';
+import { buildSVG, exportPDF, downloadText, downloadCanvas } from './export.js?v=28921e7d';
+import { LiveRecorder, MAX_RECORD_SEC } from './recorder.js?v=28921e7d';
+import { defaultMeta } from './metafield.js?v=28921e7d';
 
 const audio = new AudioEngine();
 let renderer = null;
@@ -22,7 +22,7 @@ const params = {
   // Restrained by default: a strong rim drew a luminous ring around every
   // separate lobe, which is precisely what made the water read as soap bubbles.
   gloss: 0.9, dispersion: 0.25, rim: 0.45, depth: 0.8, refract: 0.6,
-  flow: 0.35, simple: 0, swell: 0, mass: 0, form: 0, view: 0, lineW: 0.012,
+  flow: 0.35, simple: 0, swell: 0, mass: 0, join: 0, roundness: 0, fusion: 0, form: 0, view: 0, lineW: 0.012,
   // How much a design that is NOT responding to sound still moves. 0 freezes
   // it completely (zero draw calls); the default is a slow drift.
   motion: 0.35,
@@ -46,6 +46,9 @@ function applyPattern(s) {
   s.simple = params.simple;
   s.swell = params.swell;
   s.mass = params.mass;
+  s.join = params.join;
+  s.roundness = params.roundness;
+  s.fusion = params.fusion;
   renderer._dirty = true;
 }
 
@@ -74,6 +77,9 @@ function stateFromFingerprint(fp) {
   s.simple = params.simple;
   s.swell = params.swell;
   s.mass = params.mass;
+  s.join = params.join;
+  s.roundness = params.roundness;
+  s.fusion = params.fusion;
   s.mode = params.mode;
   s.meta = Object.assign({}, params.meta);
   s.variation = params.variation;
@@ -179,6 +185,9 @@ async function toggleLive() {
   conductor.field.simple = params.simple;
   conductor.field.swell = params.swell;
   conductor.field.mass = params.mass;
+  conductor.field.join = params.join;
+  conductor.field.roundness = params.roundness;
+  conductor.field.fusion = params.fusion;
   conductor.field.mode = params.mode;
   conductor.field.meta = Object.assign({}, params.meta);
   conductor.field.variation = params.variation;
@@ -348,6 +357,24 @@ window.addEventListener('DOMContentLoaded', () => {
     if (conductor) conductor.field.mass = params.mass;
     const s = currentState();
     if (s) { s.mass = params.mass; renderer._dirty = true; }
+  });
+  $('sl-join').addEventListener('input', (e) => {
+    params.join = parseFloat(e.target.value);
+    if (conductor) conductor.field.join = params.join;
+    const s = currentState();
+    if (s) { s.join = params.join; renderer._dirty = true; }
+  });
+  $('sl-round').addEventListener('input', (e) => {
+    params.roundness = parseFloat(e.target.value);
+    if (conductor) conductor.field.roundness = params.roundness;
+    const s = currentState();
+    if (s) { s.roundness = params.roundness; renderer._dirty = true; }
+  });
+  $('sl-fusion').addEventListener('input', (e) => {
+    params.fusion = parseFloat(e.target.value);
+    if (conductor) conductor.field.fusion = params.fusion;
+    const s = currentState();
+    if (s) { s.fusion = params.fusion; renderer._dirty = true; }
   });
   // Only one generator's controls are ever on screen.
   function showModeGroups() {
